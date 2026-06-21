@@ -1,0 +1,15 @@
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# 작업 임시 파일
+*.tmp
+~$*
+.DS_Store
+Thumbs.db
+.gstack/
