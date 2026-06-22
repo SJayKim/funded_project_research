@@ -15,6 +15,21 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
+# IRIS(www.iris.go.kr) WAF는 풀 브라우저 헤더 세트가 없으면 빈 템플릿 셸(행 0)을
+# 반환한다. 쿠키·JS는 불필요(실측 2026-06-22). 이 헤더만 주면 서버렌더 행이 그대로 옴.
+BROWSER_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ko-KR,ko;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Upgrade-Insecure-Requests": "1",
+}
+
 
 @dataclass
 class RawNotice:
@@ -32,6 +47,7 @@ _TLS_RELAXED_HOSTS = frozenset({
     "nidapi.k-startup.go.kr",
     "apis.data.go.kr",
     "api.odcloud.kr",
+    "www.iris.go.kr",
 })
 
 
@@ -48,6 +64,22 @@ def http_get(url: str, timeout: int = 30) -> bytes:
 
 def http_get_json(url: str, timeout: int = 30) -> dict:
     return json.loads(http_get(url, timeout).decode("utf-8"))
+
+
+def http_post(url: str, fields: dict, timeout: int = 30) -> bytes:
+    """폼 POST(application/x-www-form-urlencoded) + 브라우저 헤더 세트.
+    IRIS WAF는 이 헤더가 없으면 빈 셸을 반환한다(쿠키 불필요)."""
+    headers = {"User-Agent": USER_AGENT, **BROWSER_HEADERS,
+               "Content-Type": "application/x-www-form-urlencoded"}
+    req = urllib.request.Request(url, data=urlencode(fields).encode("utf-8"),
+                                 headers=headers)
+    context = None
+    if urlparse(url).hostname in _TLS_RELAXED_HOSTS:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
+        return resp.read()
 
 
 def build_url(base: str, service_key: str, params: dict) -> str:

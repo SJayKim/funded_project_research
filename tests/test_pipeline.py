@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import diff
 import notify_email
 from adapters.base import RawNotice
+from adapters.iris import parse_detail, parse_rows
 from adapters.msit import _item_to_dict
 from dedupe import dedupe, dedupe_within_source, jaccard
 from normalize import NoticeRecord, deadline_date, normalize, parse_deadline
@@ -119,6 +120,15 @@ class TestNormalizeSamples(unittest.TestCase):
         self.assertEqual(r.deadline, "2026-06-23 12:00:00")
         self.assertTrue(r.title and r.url and r.agency)
 
+    def test_iris_sample(self):  # acceptance #2,#3,#6,#7 — 무출처 0건 + 마감 /→- 정규화
+        r = normalize(RawNotice("iris", _load_json("iris_sample.json")["data"][0]))
+        self.assertEqual(r.source_id, "022416")
+        self.assertTrue(r.title and r.url and r.agency)
+        self.assertEqual(r.agency, "과학기술정보통신부")
+        self.assertEqual(r.specialized_agency, "한국연구재단")
+        self.assertEqual(r.deadline, "2026-06-22")  # 2026/06/22 → 2026-06-22
+        self.assertTrue(r.attachments)  # 상세 첨부 보강(#7)
+
     def test_msit_sample(self):  # 마감일 없음, 첨부 보존
         with open(os.path.join(SAMPLES, "msit_sample.xml"), encoding="utf-8") as f:
             root = ET.fromstring(f.read())
@@ -127,6 +137,39 @@ class TestNormalizeSamples(unittest.TestCase):
         self.assertEqual(r.deadline, "")
         self.assertTrue(r.attachments)
         self.assertTrue(r.url and r.agency)
+
+
+IRIS_LI = (
+    '<ul class="dbody"><li>'
+    '<span class="inst_title">과학기술정보통신부 > 한국연구재단</span>'
+    '<div class="form-row"><div class="group1"><strong class="title">'
+    '<a href="" onclick="f_bsnsAncmListForm_view(\'022416\',\'2026\',\'S050239\',\'2\','
+    '\'0\',\'2026/06/11\',\'2026/06/22\'); return false;">2026년 극한부품 시험입증지원사업</a>'
+    '</strong></div><div class="group2">'
+    '<span class="period" data-title="접수기간">2026/06/11~2026/06/22</span>'
+    '</div></div></li></ul>'
+)
+IRIS_DETAIL = (
+    '<li><em>공고번호</em><span>과학기술정보통신부 공고 제2026 - 687호</span></li>'
+    '<a onclick="downloadAtchFile(\'D1\',\'F1\',\'[공고문] 재공고.pdf\',\'100\')">x</a>'
+)
+
+
+class TestIrisParse(unittest.TestCase):
+    def test_row_parse(self):  # 고정 <li> → dict
+        rows = parse_rows(IRIS_LI)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["ancmId"], "022416")
+        self.assertEqual(row["sorgn"], "과학기술정보통신부")
+        self.assertEqual(row["spcl"], "한국연구재단")
+        self.assertEqual(row["rcveEndDt"], "2026/06/22")
+        self.assertEqual(row["ancmTl"], "2026년 극한부품 시험입증지원사업")
+
+    def test_detail_parse(self):
+        d = parse_detail(IRIS_DETAIL)
+        self.assertEqual(d["ancmNo"], "과학기술정보통신부 공고 제2026 - 687호")
+        self.assertEqual(d["attachments"], "[공고문] 재공고.pdf")
 
 
 class TestMessage(unittest.TestCase):

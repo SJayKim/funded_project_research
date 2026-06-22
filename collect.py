@@ -6,12 +6,14 @@
 """
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime
 
 import diff
 import notify_email
 from adapters.base import RawNotice
 from adapters.bizinfo import BizinfoAdapter
+from adapters.iris import IrisAdapter
 from adapters.kstartup import KStartupAdapter
 from adapters.msit import MsitAdapter
 from adapters.nara import NaraAdapter
@@ -19,7 +21,7 @@ from dedupe import dedupe
 from normalize import NoticeRecord, normalize
 from store import Store
 
-ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter]
+ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
 
 
 def collect_all() -> list[RawNotice]:
@@ -63,13 +65,16 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
 
 
 def main() -> None:
+    # --no-notify: 첫 실행 시 메일 발송 없이 DB만 시딩(전건이 '신규'로 잡혀 폭주하는 것 방지).
+    # run()은 send=False여도 알림이력·레코드를 기록하므로 다음 실행부터 진짜 델타만 알린다.
+    send = "--no-notify" not in sys.argv
     store = Store()
     raws = collect_all()
     current = dedupe([normalize(r) for r in raws])
-    summary = run(store, current, date.today())
+    summary = run(store, current, date.today(), send=send)
     store.close()
     print(f"수집 {len(current)}건 | 신규 {summary['new']} · 수정 {summary['modified']} · "
-          f"임박 {summary['imminent']}")
+          f"임박 {summary['imminent']}" + ("" if send else " | --no-notify(메일 생략, DB 시딩)"))
 
 
 if __name__ == "__main__":

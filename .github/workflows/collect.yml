@@ -3,7 +3,12 @@ name: collect
 on:
   schedule:
     - cron: "0 0 * * 1"   # 1주차: 주1회(월 09:00 KST). 안정 후 일1~2회로 조정.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      no_notify:
+        description: "첫 실행: 메일 발송 없이 DB만 시딩(폭주 방지)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,7 +38,7 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: python collect.py
+        run: python collect.py ${{ inputs.no_notify && '--no-notify' || '' }}
 
       # 갱신된 DB를 data 브랜치에 커밋(main 이력 오염 방지).
       - name: Commit DB to data branch

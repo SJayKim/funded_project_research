@@ -133,11 +133,27 @@ def _map_nara(r: dict) -> NoticeRecord:
     )
 
 
+def _map_iris(r: dict) -> NoticeRecord:
+    # 마감일 rcveEndDt는 YYYY/MM/DD → '/'→'-' 치환 후 parse_deadline(공용 무변경).
+    ancm = normalize_text(r.get("ancmId"))
+    return NoticeRecord(
+        source="iris",
+        source_id=ancm,
+        title=normalize_text(r.get("ancmTl")),
+        url=f"https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId={ancm}",
+        agency=normalize_text(r.get("sorgn")),            # 소관부처
+        specialized_agency=normalize_text(r.get("spcl")),  # 전담기관
+        deadline=parse_deadline((r.get("rcveEndDt") or "").replace("/", "-")),
+        attachments=normalize_text(r.get("attachments")),  # 상세 첨부 파일명 ' '.join
+    )
+
+
 MAPPERS = {
     "kstartup": _map_kstartup,
     "bizinfo": _map_bizinfo,
     "msit": _map_msit,
     "nara": _map_nara,
+    "iris": _map_iris,
 }
 
 

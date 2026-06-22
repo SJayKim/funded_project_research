@@ -1,0 +1,18 @@
+{
+  "_note": "실측 2026-06-22 IRIS retrieveBsnsAncmListView.do 행1 + 상세 보강 결과(parse_rows+parse_detail 산출). 무출처 금지 관례.",
+  "data": [
+    {
+      "ancmId": "022416",
+      "bsnsYy": "2026",
+      "sorgnBsnsCd": "S050239",
+      "bsnsAncmSn": "2",
+      "rcveStrDt": "2026/06/11",
+      "rcveEndDt": "2026/06/22",
+      "ancmTl": "2026년 극한부품 시험입증지원사업(Track형 실증지원) 신규과제 재공모",
+      "sorgn": "과학기술정보통신부",
+      "spcl": "한국연구재단",
+      "ancmNo": "과학기술정보통신부 공고 제2026 - 687호",
+      "attachments": "[공고문] 2026년 극한부품 시험입증지원사업(Track형 실증) 신규과제 재공고.pdf 붙임1 2026년 극한부품 시험입증지원사업 신규과제 과제제안요구서(RFP).pdf 붙임2 연구개발계획서(양식).zip 붙임3 별첨자료 양식.hwp 붙임4 (참고자료) IRIS 매뉴얼, TRL 기준 등.zip"
+    }
+  ]
+}
