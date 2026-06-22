@@ -146,6 +146,38 @@
 
 ## 7. 운영 전 반드시 확정할 미해결 사항
 
+### 실측 확정 (2026-06-22, serviceKey 실호출)
+
+- **K-Startup 사업공고(15125364) — confirmed.** 엔드포인트 `nidapi.k-startup.go.kr/api/kisedKstartupService/v1/getAnnouncementInformation`,
+  `serviceKey`(URL-encoded)·`page`·`perPage`·`returnType=json`. HTTP 200, JSON UTF-8.
+  - **접수마감일 필드 존재**: `pbanc_rcpt_end_dt`(YYYYMMDD 문자열, 예 `"20260708"`). 시작일 `pbanc_rcpt_bgng_dt`, 모집진행 `rcrt_prgs_yn`(Y/N). → **마감 알림 가능 confirmed.**
+  - **페이징**: `page`+`perPage` 쿼리, 응답 메타 `totalCount`/`matchCount`(전체 29,150건)·`currentCount`·`page`·`perPage`. raw에 종료 공고 포함 → 수집 시 `rcrt_prgs_yn`/`pbanc_rcpt_end_dt` 필터 필요.
+  - **고유키**: `pbanc_sn`(정수, dedupe source-id 후보). 상세URL `detl_pg_url`. data[]당 30개 필드. 샘플: `samples/kstartup_sample.json`.
+  - 미확인 잔존: 지원규모(금액)는 여전히 정형 숫자 필드 없음(`pbanc_ctnt` 본문 텍스트만).
+- **기업마당 미러(3034791) — 정정 + 실측 confirmed(2026-06-22).** 기존 표기 "REST JSON/XML/CSV 실시간 미러"는 부정확. 실제는
+  「중소벤처기업부_중소기업지원사업목록」 **파일데이터(`fileData.do`) + odcloud OpenAPI**, **업데이트 주기 = 연간**(최신 수정 2025-11-11, 차기 2026-04-02).
+  활용신청 자동승인 후 같은 serviceKey로 실호출 200 확인.
+  - **End Point**: `https://api.odcloud.kr/api/3034791/v1/uddi:fa09d13d-bce8-474e-b214-8008e79ec08f` (Base `api.odcloud.kr/api`, namespace `3034791/v1`)
+  - **파라미터**: `page`·`perPage`·`serviceKey`·`returnType=JSON`. 메타 `totalCount`/`matchCount`(97,794)·`currentCount`·`page`·`perPage`.
+  - **필드(한글 키)**: 번호·분야·사업명·신청시작일자·`신청종료일자`·소관기관·수행기관·등록일자·상세URL. **마감일 `신청종료일자` = `YYYY-MM-DD`(하이픈)** — K-Startup의 `pbanc_rcpt_end_dt` YYYYMMDD와 포맷·키 언어 다름 → 정규화 레이어가 양쪽 처리 필요.
+  - **신선도 한계**: 데이터는 2025-03-31 스냅샷(등록일자 다 2025-03-27). 연간 갱신이라 실시간 아님 → 1주차 포함(사용자 결정 B), 실시간성은 2차 crtfcKey API로 보강. 샘플 `samples/bizinfo_mirror.json`.
+- **과기정통부(15074634) — 실측 confirmed.** 엔드포인트 `apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList`,
+  `serviceKey`·`pageNo`·`numOfRows`. **WAF가 User-Agent 없는 요청을 400 Request Blocked로 차단 → 브라우저 UA 헤더 필수.** 응답 XML 고정(type=json 무시).
+  - 필드: `subject`·`viewUrl`·`deptName`·`managerName`·`managerTel`·`pressDt`(게시일)·`files`(fileName/fileUrl). totalCount 4,162.
+  - **★ 접수마감일 필드 없음** — `pressDt`(게시일)만 존재. 이 소스는 "새 공고 알림"만 가능, "마감 임박 알림"은 공고문(hwpx)/viewUrl 파싱 필요(2단계).
+- **나라장터 입찰공고(15129394) — 실측 confirmed.** Base `apis.data.go.kr/1230000/ad/BidPublicInfoService`, 용역 오퍼레이션 `getBidPblancListInfoServc`(업무구분별 분리).
+  params `serviceKey`·`pageNo`·`numOfRows`·`type=json`·`inqryDiv`·`inqryBgnDt`/`inqryEndDt`(YYYYMMDDHHMM). UA 헤더 필요.
+  - **마감일 `bidClseDt` = `YYYY-MM-DD HH:MM:SS`**(예 2026-06-23 12:00:00) ✅. `bidNtceDt`(공고)·`bidBeginDt`(개시)·`opengDt`(개찰)·고유키 `bidNtceNo`. 샘플 `samples/nara_servc.json`.
+- **나라장터 개방표준(15058815) — 실측 confirmed.** Base `apis.data.go.kr/1230000/ao/PubDataOpnStdService`, 오퍼레이션 `getDataSetOpnStdBidPblancInfo`.
+  params `bidNtceBgnDt`/`bidNtceEndDt`. 필드 53개.
+  - **마감일 `bidClseDate`(YYYY-MM-DD) + `bidClseTm`(HH:MM) 분리 필드** ✅. `bidPrtcptQlfctRgstClseDate`(자격등록마감)·`opengDate`/`opengTm`(개찰)도 분리. 샘플 `samples/nara_std.json`.
+- **중소벤처24(15113191) — 정정.** data.go.kr 표준 REST 아님. **LINK 타입**으로 제공기관 `smes.go.kr/main/dbCnrs` 연계,
+  정확한 endpoint·파라미터는 첨부 「공고정보 연계 API 가이드_V2.pdf」 필요(문의 중소기업기술정보진흥원 1566-0025). serviceKey 표준 호출 불가 → 실측 보류.
+
+**어댑터 정규화 레이어 요구(실측 확정):** 마감일 포맷이 소스마다 4종 — `YYYYMMDD`(K-Startup) / `YYYY-MM-DD`(기업마당, 한글 키) / `YYYY-MM-DD HH:MM:SS`(나라장터 입찰) / `YYYY-MM-DD`+`HH:MM` 분리(개방표준). 키 언어도 한글/영문 혼재. 과기정통부는 마감일 자체가 없어 게시일 기반 "신규 알림"으로만 처리.
+
+### 미확정
+
 - **응답 스키마 실호출 검증**: 각 API의 정확한 영문 필드명·페이징·**지원규모(금액) 필드 존부**. 점검한 5개 공고
   API 모두 **금액을 정형 숫자 필드로 노출하지 않음**(공고명·접수기간·상세URL·첨부 링크만) → 금액·자격은 상세/
   첨부 파싱 필요. **운영 전 실호출로 스키마 확정 필수.**

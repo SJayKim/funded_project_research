@@ -51,11 +51,11 @@
 
 | 소스 | 데이터셋/경로 | 판정 | 1차 마감일 필드 |
 |---|---|---|---|
-| K-Startup 사업공고 | data.go.kr `15125364`, 자동승인, 10,000회/일 | API | ✅ 접수종료일 YYYYMMDD (confirmed) |
-| 과기정통부 R&D | data.go.kr `15074634`, 자동승인 | API | ⚠️ 게시일 위주, 마감일 필드 불명확 → 실호출 확인 |
-| 중소벤처24 공고 | data.go.kr `15113191` | API | ⚠️ 접수기간 존재 추정, 실호출 확인 |
-| 나라장터 용역 | data.go.kr `15129394`/`15058815`, 업무구분 '용역' 필터 | API | ⚠️ 입찰마감 존재 추정, 실호출 확인 |
-| 기업마당 | 자체 API(crtfcKey 필요) **또는 data.go.kr 미러 `3034791`(REST JSON)** | API | ⚠️ 실호출 확인 |
+| K-Startup 사업공고 | data.go.kr `15125364`, 엔드포인트 `nidapi.k-startup.go.kr/api/kisedKstartupService/v1/getAnnouncementInformation`, 자동승인, 10,000회/일 | API | ✅ `pbanc_rcpt_end_dt` YYYYMMDD (실호출 confirmed 2026-06-22) |
+| 과기정통부 R&D | data.go.kr `15074634`, 엔드포인트 `apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList` (브라우저 UA 헤더 필수, XML 고정) | API | ❌ **마감일 필드 없음** — `pressDt` 게시일만 (실호출 confirmed). 신규 알림만 가능 |
+| 중소벤처24 공고 | data.go.kr `15113191` — **LINK 타입**, 제공기관 `smes.go.kr/main/dbCnrs` 연계, 표준 REST 아님(연계 API 가이드 PDF 필요) | API(LINK) | ⚠️ endpoint 미확보 → 실측 불가 |
+| 나라장터 용역 | data.go.kr `15129394`(`/getBidPblancListInfoServc`)/`15058815`(`/getDataSetOpnStdBidPblancInfo`), Base `apis.data.go.kr/1230000/...`, UA 헤더 필요 | API | ✅ `bidClseDt` `YYYY-MM-DD HH:MM:SS` / 개방표준 `bidClseDate`+`bidClseTm` (실호출 confirmed) |
+| 기업마당 미러 | data.go.kr `3034791`, End Point `api.odcloud.kr/api/3034791/v1/uddi:fa09d13d-bce8-474e-b214-8008e79ec08f`, 자동승인 | API(파일/odcloud) | ✅ `신청종료일자` `YYYY-MM-DD` (실호출 confirmed 2026-06-22) / ⚠️ 연간 스냅샷 |
 | IRIS 범부처 R&D 공고 | `iris.go.kr/contents/retrieveBsnsAncmListView.do` 정적 HTML, robots `/contents/` 허용 | 스크래핑 | 접수기간 노출(2주차) |
 | NTIS 사업공고 | **공고 API 없음, robots `Disallow:/` 전면차단** | 절대 스크래핑 금지 · API only(과제·성과 메타만) | — |
 
@@ -65,7 +65,10 @@
 
 ### 1주차 (data.go.kr serviceKey 자동승인 소스 only)
 
-대상: K-Startup(15125364) · 과기정통부 R&D(15074634) · 중소벤처24(15113191) · 나라장터 용역(15129394/15058815) · **기업마당 미러(`3034791`, data.go.kr REST JSON)**. 기업마당 자체 API(crtfcKey 수동발급)는 1주차 블로커이므로 미러로 1주차에 포함하고, crtfcKey 발급은 2차로 미룬다(미러 마감일 필드 존부는 블로커 1번에서 실측).
+대상: K-Startup(15125364) · 과기정통부 R&D(15074634) · 나라장터 용역(15129394/15058815) · **기업마당 미러(`3034791`)**. 기업마당 자체 API(crtfcKey 수동발급)는 1주차 블로커이므로 미러로 1주차에 포함하고, crtfcKey 발급은 2차로 미룬다.
+
+- **기업마당 미러 `3034791`**(사용자 결정 B, 2026-06-22): 파일데이터+OpenAPI(odcloud), **업데이트 주기 연간** 스냅샷이라 신선도 한계가 있으나 1주차에 그대로 포함해 수집·표시한다. 실시간성은 2차 crtfcKey API로 보강. **실측 confirmed**: End Point `api.odcloud.kr/api/3034791/v1/uddi:fa09d13d-bce8-474e-b214-8008e79ec08f`, 자동승인 후 동일 serviceKey 200, `신청종료일자` `YYYY-MM-DD`(한글 키). K-Startup(YYYYMMDD·영문 키)과 포맷·키 언어가 달라 정규화 레이어가 양쪽을 처리해야 함.
+- **중소벤처24 `15113191`**: LINK 타입(표준 REST 아님, smes.go.kr 연계). endpoint 미확보로 1주차 실측 보류 → 연계 API 가이드 PDF 확인 후 편입 판단.
 
 산출: 공통 어댑터 계약 + 정규화 레이어 + 소스내 중복제거 + SQLite(`data` 브랜치) + 증분 diff + 이메일 알림 1채널 가동 → 곧장 "안 놓침" 체감.
 
@@ -135,7 +138,7 @@ IRIS 스크래퍼(`/contents/retrieveBsnsAncmListView.do`)를 **같은 어댑터
 
 design "Open Questions" + data_source_research §7. 추측 금지, 실호출로 확정:
 
-1. **★ 소스별 접수마감일 필드 존부** (마감 알림의 생명선). K-Startup만 confirmed. 과기정통부·중소벤처24·나라장터·기업마당 미러(3034791)는 게시일 위주일 수 있음 → 마감일 없으면 마감 임박 알림 불가, 상세 파싱 필요 여부 판정.
+1. ~~**★ 소스별 접수마감일 필드 존부**~~ — **실측 완료(2026-06-22)**. K-Startup `pbanc_rcpt_end_dt`(YYYYMMDD)·기업마당 미러 `신청종료일자`(YYYY-MM-DD)·나라장터 입찰 `bidClseDt`(YYYY-MM-DD HH:MM:SS)·개방표준 `bidClseDate`+`bidClseTm` 모두 confirmed. **과기정통부는 마감일 필드 없음**(`pressDt` 게시일만) → 신규 알림만. **중소벤처24는 LINK 타입이라 endpoint 미확보 → 실측 보류**(연계 API 가이드 PDF 필요). 정규화 레이어는 마감일 4개 포맷 + 한글/영문 키를 모두 처리해야 함.
 2. **API 응답 스키마 실호출 검증**: 영문 필드명·페이징. 5개 공고 API 모두 지원금액을 정형 숫자 필드로 노출하지 않음 → 금액은 2단계.
 3. **cross-source 중복 판정**: 동일 공고가 K-Startup API와 IRIS에 다른 ID로 뜰 때 title+agency 정규화 매칭이 충분한지 실데이터 검증.
 4. ~~기업마당 crtfcKey 발급 절차~~ — **1주차는 미러 `3034791` 채택으로 해소**. crtfcKey 발급(IP/시스템URL 등록·일일 호출제한)은 2차로 이월.

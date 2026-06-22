@@ -13,3 +13,6 @@ CLAUDE.local.md
 .DS_Store
 Thumbs.db
 .gstack/
+
+# 브라우저 자동화 로그
+.playwright-mcp/
