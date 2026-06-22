@@ -1,0 +1,53 @@
+name: collect
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"   # 1주차: 주1회(월 09:00 KST). 안정 후 일1~2회로 조정.
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # data 브랜치에서 직전 SQLite 스냅샷 복원(없으면 첫 실행 = 빈 DB).
+      - name: Restore DB from data branch
+        run: |
+          git fetch origin data || true
+          git show origin/data:gov_notices.db > gov_notices.db || rm -f gov_notices.db
+
+      - name: Run collector
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: python collect.py
+
+      # 갱신된 DB를 data 브랜치에 커밋(main 이력 오염 방지).
+      - name: Commit DB to data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git worktree add -B data data-wt origin/data
+          else
+            git worktree add --detach data-wt
+            ( cd data-wt && git checkout --orphan data && git rm -rf . >/dev/null 2>&1 || true )
+          fi
+          cp gov_notices.db data-wt/gov_notices.db
+          cd data-wt
+          git add gov_notices.db
+          git commit -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "no changes"
+          git push origin data

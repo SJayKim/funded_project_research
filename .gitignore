@@ -7,6 +7,10 @@ CLAUDE.local.md
 *.pem
 *.key
 
+# SQLite 스냅샷은 data 브랜치 전용 (main 이력 오염 방지)
+gov_notices.db
+__pycache__/
+
 # 작업 임시 파일
 *.tmp
 ~$*
