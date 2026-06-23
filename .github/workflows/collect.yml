@@ -2,7 +2,7 @@ name: collect
 
 on:
   schedule:
-    - cron: "0 0 * * 1"   # 1주차: 주1회(월 09:00 KST). 안정 후 일1~2회로 조정.
+    - cron: "0 0 * * *"   # 매일 00:00 UTC = 09:00 KST.
   workflow_dispatch:
     inputs:
       no_notify:
@@ -38,6 +38,9 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
+          # 미설정 시 빈 문자열 → summarize가 규칙 fallback으로 정상 동작.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
         run: python collect.py ${{ inputs.no_notify && '--no-notify' || '' }}
 
       # 갱신된 DB를 data 브랜치에 커밋(main 이력 오염 방지).

@@ -14,6 +14,9 @@ DEFAULT_DB = "gov_notices.db"
 
 _COLS = [f.name for f in fields(NoticeRecord)]
 
+# 구 DB(data 브랜치)엔 없던 컬럼. 마이그레이션으로 ALTER 추가한다.
+NEW_COLUMNS = ("category", "summary", "is_tech")
+
 
 class Store:
     def __init__(self, path: str = DEFAULT_DB):
@@ -38,13 +41,21 @@ class Store:
             );
             """
         )
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """없는 새 컬럼만 ALTER ADD. fresh DB엔 이미 존재 → skip. 멱등."""
+        existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(notices)")}
+        for col in NEW_COLUMNS:
+            if col not in existing:
+                self.conn.execute(f"ALTER TABLE notices ADD COLUMN {col} TEXT")
 
     def load(self) -> dict[str, NoticeRecord]:
         """기존 적재 레코드(직전 스냅샷)를 key->NoticeRecord로."""
         out: dict[str, NoticeRecord] = {}
         for row in self.conn.execute(f"SELECT {', '.join(_COLS)} FROM notices"):
-            rec = NoticeRecord(**{c: row[c] for c in _COLS})
+            rec = NoticeRecord(**{c: (row[c] or "") for c in _COLS})  # ALTER NULL→"" 보정
             out[rec.key] = rec
         return out
 

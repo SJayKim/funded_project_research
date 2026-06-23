@@ -4,15 +4,20 @@ samples/ 실측 fixture 사용(무출처 금지 관례). 한글 JSON은 encoding
 """
 import json
 import os
+import sqlite3
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import classify
 import diff
 import notify_email
+import serve
+import summarize
 from adapters.base import RawNotice
 from adapters.iris import parse_detail, parse_rows
 from adapters.msit import _item_to_dict
@@ -28,9 +33,11 @@ def _load_json(name):
         return json.load(f)
 
 
-def rec(source="kstartup", sid="1", title="t", url="u", agency="a", deadline="", status="", attachments=""):
+def rec(source="kstartup", sid="1", title="t", url="u", agency="a", deadline="", status="",
+        attachments="", target="", category="", summary="", is_tech=""):
     return NoticeRecord(source=source, source_id=sid, title=title, url=url,
-                        agency=agency, deadline=deadline, status=status, attachments=attachments)
+                        agency=agency, target=target, deadline=deadline, status=status,
+                        attachments=attachments, category=category, summary=summary, is_tech=is_tech)
 
 
 class TestDeadlineParse(unittest.TestCase):
@@ -173,12 +180,17 @@ class TestIrisParse(unittest.TestCase):
 
 
 class TestMessage(unittest.TestCase):
-    def test_new_message_has_required_fields(self):  # acceptance #2
+    def test_new_message_has_required_fields(self):  # acceptance #2 (제목·요약·마감·url)
         r = rec("kstartup", "1", title="딥테크 공고", url="https://k.go.kr/x",
-                agency="중기부", deadline="2026-07-08")
+                agency="중기부", deadline="2026-07-08", summary="딥테크 R&D를 지원하는 공고")
         subject, body = notify_email.build_message([r], [], [])
-        for token in ("딥테크 공고", "중기부", "2026-07-08", "https://k.go.kr/x"):
+        for token in ("딥테크 공고", "딥테크 R&D를 지원하는 공고", "2026-07-08", "https://k.go.kr/x"):
             self.assertIn(token, body)
+
+    def test_summary_falls_back_to_title(self):  # 요약 없으면 제목 노출
+        r = rec("kstartup", "1", title="요약없는공고", url="u", agency="중기부", deadline="2026-07-08")
+        _, body = notify_email.build_message([r], [], [])
+        self.assertIn("요약없는공고", body)
 
     def test_empty_returns_none(self):
         self.assertIsNone(notify_email.build_message([], [], []))
@@ -190,14 +202,18 @@ class TestRunPipeline(unittest.TestCase):
         self.sent = []
         self._orig = notify_email.send
         notify_email.send = lambda s, b, transport=None: self.sent.append((s, b))
+        # 요약은 결정적 스텁(네트워크/키 의존 제거).
+        self._orig_sum = summarize.summarize
+        summarize.summarize = lambda recs: {r.key: "요약" for r in recs}
 
     def tearDown(self):
         notify_email.send = self._orig
+        summarize.summarize = self._orig_sum
         self.store.close()
 
-    def test_new_then_recollect_zero(self):  # #1,#2,#3
+    def test_new_then_recollect_zero(self):  # #1,#2,#3 (메일 tech-only → 제목을 기술로)
         today = date(2026, 6, 22)
-        r = rec("kstartup", "178198", title="딥테크", url="u", agency="중기부", deadline="2026-07-08")
+        r = rec("kstartup", "178198", title="AI 딥테크 공고", url="u", agency="중기부", deadline="2026-07-08")
         from collect import run
         out1 = run(self.store, [r], today)
         self.assertEqual(out1["new"], 1)
@@ -209,11 +225,217 @@ class TestRunPipeline(unittest.TestCase):
     def test_imminent_once(self):  # #4 중복 발송 없음
         from collect import run
         today = date(2026, 6, 22)
-        r = rec("kstartup", "1", title="t", url="u", agency="a", deadline="2026-06-29")  # D-7
+        r = rec("kstartup", "1", title="AI 솔루션 공고", url="u", agency="a", deadline="2026-06-29")  # D-7
         out1 = run(self.store, [r], today)
         self.assertEqual(out1["imminent"], 1)
         out2 = run(self.store, [r], today)  # 같은 임계 재발송 안 함
         self.assertEqual(out2["imminent"], 0)
+
+
+class TestClassify(unittest.TestCase):
+    def test_ai_category(self):
+        cat, tech = classify.classify(rec(title="생성형 AI 기반 업무자동화 R&D"))
+        self.assertEqual((cat, tech), ("AI/생성형AI", "1"))
+
+    def test_manufacturing(self):
+        cat, tech = classify.classify(rec(title="스마트팩토리 예지보전 실증사업"))
+        self.assertEqual((cat, tech), ("제조AI", "1"))
+
+    def test_saas_english_lowercased(self):  # 영문 토큰 .lower() 매칭
+        cat, tech = classify.classify(rec(title="SaaS 전환 지원사업"))
+        self.assertEqual((cat, tech), ("클라우드/SaaS", "1"))
+
+    def test_non_tech(self):
+        self.assertEqual(classify.classify(rec(title="소상공인 경영 컨설팅 지원")), ("기타", "0"))
+
+    def test_declaration_order_deterministic(self):  # AI가 데이터보다 먼저 선언 → 첫 매칭 승
+        cat, _ = classify.classify(rec(title="AI 데이터 구축 사업"))
+        self.assertEqual(cat, "AI/생성형AI")
+
+    def test_agency_excluded(self):  # 기관명에 기술 키워드 있어도 제목/대상만으로 판정
+        cat, tech = classify.classify(rec(title="일반 행정 효율화", agency="인공지능산업진흥원"))
+        self.assertEqual((cat, tech), ("기타", "0"))
+
+
+class TestStoreMigration(unittest.TestCase):
+    def test_fresh_has_new_columns(self):
+        s = Store(":memory:")
+        cols = {row["name"] for row in s.conn.execute("PRAGMA table_info(notices)")}
+        self.assertTrue({"category", "summary", "is_tech"} <= cols)
+        s.close()
+
+    def test_alter_old_table_and_null_fill(self):  # 구 13컬럼 → ALTER + 멱등 + NULL→""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute(
+                "CREATE TABLE notices (key TEXT PRIMARY KEY, source TEXT, source_id TEXT, "
+                "title TEXT, url TEXT, agency TEXT, specialized_agency TEXT, target TEXT, "
+                "deadline TEXT, status TEXT, attachments TEXT, first_seen TEXT, last_seen TEXT)"
+            )
+            conn.execute("INSERT INTO notices (key, source, source_id, title) "
+                         "VALUES ('kstartup:1','kstartup','1','t')")
+            conn.commit()
+            conn.close()
+
+            s = Store(path)  # _migrate가 누락 컬럼 추가
+            cols = {row["name"] for row in s.conn.execute("PRAGMA table_info(notices)")}
+            self.assertTrue({"category", "summary", "is_tech"} <= cols)
+            loaded = s.load()
+            self.assertEqual(loaded["kstartup:1"].summary, "")   # NULL→""
+            self.assertEqual(loaded["kstartup:1"].is_tech, "")
+            s.close()
+
+            s2 = Store(path)  # 멱등: 재오픈 에러 없음
+            s2.close()
+        finally:
+            os.unlink(path)
+
+
+class TestSummaryCaching(unittest.TestCase):
+    """collect.run의 요약 게이트(신규∩tech∩미캐시 / 시딩 생략 / 재요약 방지)."""
+
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.calls = []
+        self._orig_sum = summarize.summarize
+        summarize.summarize = self._count
+        self._orig_send = notify_email.send
+        notify_email.send = lambda *a, **k: None
+
+    def _count(self, recs):
+        self.calls.append([r.key for r in recs])
+        return {r.key: "LLM요약" for r in recs}
+
+    def tearDown(self):
+        summarize.summarize = self._orig_sum
+        notify_email.send = self._orig_send
+        self.store.close()
+
+    def test_only_new_tech_summarized(self):
+        from collect import run
+        tech = rec("kstartup", "1", title="AI 자동화 R&D")
+        nontech = rec("bizinfo", "2", title="전통시장 환경개선 지원")
+        run(self.store, [tech, nontech], date(2026, 6, 22))
+        self.assertEqual(self.calls[0], ["kstartup:1"])  # 기술 신규만 요약
+
+    def test_no_resummarize_on_recollect(self):
+        from collect import run
+        today = date(2026, 6, 22)
+        run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)
+        self.assertEqual(self.calls[0], ["kstartup:1"])
+        run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)  # 새 객체 재수집
+        self.assertEqual(self.calls[1], [])              # 캐시 유지 → 재요약 0건
+
+    def test_no_notify_skips_summary(self):
+        from collect import run
+        run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], date(2026, 6, 22), send=False)
+        self.assertEqual(self.calls[0], [])              # 시딩엔 LLM 호출 0건
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._payload
+
+
+class TestSummarizeRequest(unittest.TestCase):
+    """summarize.summarize 자체: 키 없음 fallback / 요청 body 금지 파라미터 부재."""
+
+    def tearDown(self):
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    def test_no_key_fallback_no_network(self):
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        called = []
+        orig = summarize.urllib.request.urlopen
+        summarize.urllib.request.urlopen = lambda *a, **k: called.append(1)
+        try:
+            out = summarize.summarize([rec("kstartup", "1", title="AI 공고", agency="중기부")])
+        finally:
+            summarize.urllib.request.urlopen = orig
+        self.assertEqual(called, [])              # 네트워크 호출 0
+        self.assertTrue(out["kstartup:1"])        # fallback 문자열 존재
+
+    def test_request_body_has_no_forbidden_params(self):
+        captured = {}
+
+        def fake(req, timeout=30):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResp(json.dumps({"content": [{"type": "text", "text": "요약문"}]}).encode("utf-8"))
+
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        orig = summarize.urllib.request.urlopen
+        summarize.urllib.request.urlopen = fake
+        try:
+            out = summarize.summarize([rec("kstartup", "1", title="AI 공고", agency="중기부")])
+        finally:
+            summarize.urllib.request.urlopen = orig
+        body = captured["body"]
+        for forbidden in ("temperature", "top_p", "top_k", "budget_tokens"):
+            self.assertNotIn(forbidden, body)     # Opus 4.8 계약: 보내면 400
+        self.assertEqual(body["model"], summarize.MODEL)
+        self.assertIn("max_tokens", body)
+        self.assertEqual(out["kstartup:1"], "요약문")
+
+
+class TestTechFiltering(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.sent = []
+        self._orig = notify_email.send
+        notify_email.send = lambda s, b, transport=None: self.sent.append((s, b))
+        self._orig_sum = summarize.summarize
+        summarize.summarize = lambda recs: {r.key: "요약" for r in recs}
+
+    def tearDown(self):
+        notify_email.send = self._orig
+        summarize.summarize = self._orig_sum
+        self.store.close()
+
+    def test_email_tech_only_db_all(self):
+        from collect import run
+        tech = rec("kstartup", "1", title="AI 자동화 R&D", agency="중기부", deadline="2026-07-08")
+        nontech = rec("bizinfo", "2", title="전통시장 환경개선 지원", agency="소진공", deadline="2026-07-08")
+        out = run(self.store, [tech, nontech], date(2026, 6, 22))
+        self.assertEqual(out["new"], 2)               # DB는 전건
+        body = self.sent[-1][1]
+        self.assertIn("AI 자동화 R&D", body)            # 메일엔 기술만
+        self.assertNotIn("전통시장 환경개선", body)
+        loaded = self.store.load()
+        self.assertEqual(loaded["kstartup:1"].is_tech, "1")
+        self.assertEqual(loaded["bizinfo:2"].is_tech, "0")  # 비기술도 저장
+
+
+class TestServe(unittest.TestCase):
+    def test_fetch_and_render(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            s = Store(path)
+            r = rec("kstartup", "1", title="AI 한글 공고", agency="중기부", deadline="2026-07-08",
+                    category="AI/생성형AI", is_tech="1", summary="요약 </script> 테스트")
+            s.upsert(r, "2026-06-23T00:00:00")
+            s.commit()
+            s.close()
+            notices = serve.fetch_notices(path)
+            self.assertEqual(len(notices), 1)
+            self.assertEqual(notices[0]["title"], "AI 한글 공고")
+            html = serve.render_page(notices)
+            self.assertIn("AI 한글 공고", html)        # 한글 임베드
+            self.assertIn("<\\/script>", html)         # </ → <\/ 치환
+            self.assertIn("기술 전체", html)            # 기본 tech 필터 마커
+        finally:
+            os.unlink(path)
 
 
 if __name__ == "__main__":

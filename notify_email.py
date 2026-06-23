@@ -14,9 +14,10 @@ from normalize import NoticeRecord
 
 
 def _line(rec: NoticeRecord) -> str:
-    # 무출처 0건: 공고명·소관부처·접수마감·출처 URL 항상 포함.
+    # 형식: 제목 · 요약 · 마감 + 출처 URL(둘째 줄). 요약 없으면 제목으로 대체.
+    summary = rec.summary or rec.title
     deadline = rec.deadline or "(마감일 없음)"
-    return f"- {rec.title} | {rec.agency} | 마감 {deadline} | {rec.url}"
+    return f"- {rec.title} · {summary} · 마감 {deadline}\n  {rec.url}"
 
 
 def build_message(

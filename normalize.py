@@ -28,6 +28,9 @@ class NoticeRecord:
     deadline: str = ""            # 접수 마감(정규화): "YYYY-MM-DD" 또는 "YYYY-MM-DD HH:MM[:SS]"
     status: str = ""              # 신청상태(watch)
     attachments: str = ""         # 첨부 링크 ' '.join(watch)
+    category: str = ""            # classify 결과(기술분야)
+    summary: str = ""             # LLM/규칙 요약(캐시)
+    is_tech: str = ""             # "1"/"0" (TEXT, 스키마 일관)
 
     @property
     def key(self) -> str:

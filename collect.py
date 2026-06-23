@@ -9,8 +9,10 @@ from __future__ import annotations
 import sys
 from datetime import date, datetime
 
+import classify
 import diff
 import notify_email
+import summarize
 from adapters.base import RawNotice
 from adapters.bizinfo import BizinfoAdapter
 from adapters.iris import IrisAdapter
@@ -35,6 +37,10 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
     """순수 파이프라인(어댑터 제외). 테스트가 current를 직접 주입한다."""
     previous = store.load()
 
+    # 전건 카테고리/기술여부 결정(결정적 키워드 매칭).
+    for rec in current:
+        rec.category, rec.is_tech = classify.classify(rec)
+
     new = diff.find_new(previous, current)
     modified = diff.find_modified(previous, current)
 
@@ -45,7 +51,21 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
         if not store.alert_sent(rec.key, atype):
             imminent.append((rec, d))
 
-    msg = notify_email.build_message(new, imminent, modified)
+    # 요약: 신규∩기술∩미캐시만 LLM 호출(비용 통제). 시딩(send=False)엔 생략.
+    to_sum = [r for r in new if r.is_tech == "1" and not r.summary] if send else []
+    summaries = summarize.summarize(to_sum)
+    for r in current:
+        if r.key in summaries:
+            r.summary = summaries[r.key]
+        elif not r.summary and (p := previous.get(r.key)) and p.summary:
+            r.summary = p.summary  # 기존 레코드 요약 유지(upsert가 ""로 덮지 않게)
+
+    # 메일은 기술 공고만(DB엔 전건 저장).
+    new_t = [r for r in new if r.is_tech == "1"]
+    imm_t = [(r, d) for r, d in imminent if r.is_tech == "1"]
+    mod_t = [m for m in modified if m.record.is_tech == "1"]
+
+    msg = notify_email.build_message(new_t, imm_t, mod_t)
     if msg and send:
         notify_email.send(*msg)
 
