@@ -22,7 +22,7 @@ from adapters.base import RawNotice
 from adapters.iris import parse_detail, parse_rows
 from adapters.msit import _item_to_dict
 from dedupe import dedupe, dedupe_within_source, jaccard
-from normalize import NoticeRecord, deadline_date, normalize, parse_deadline
+from normalize import NoticeRecord, deadline_date, normalize, normalize_text, parse_deadline
 from store import Store
 
 SAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "samples")
@@ -144,6 +144,20 @@ class TestNormalizeSamples(unittest.TestCase):
         self.assertEqual(r.deadline, "")
         self.assertTrue(r.attachments)
         self.assertTrue(r.url and r.agency)
+
+
+class TestNormalizeText(unittest.TestCase):
+    def test_html_entities_decoded(self):  # K-Startup 제목 &apos; 등 정리
+        self.assertEqual(normalize_text("It&apos;s AI &amp; R&amp;D 공고"), "It's AI & R&D 공고")
+        self.assertEqual(normalize_text("&lt;딥테크&gt; &#39;공고&#39;"), "<딥테크> '공고'")
+
+    def test_nbsp_collapsed(self):  # &nbsp; → 공백 → 단일 공백
+        self.assertEqual(normalize_text("AI&nbsp;&nbsp;공고"), "AI 공고")
+
+    def test_empty_and_plain_unchanged(self):
+        self.assertEqual(normalize_text(""), "")
+        self.assertEqual(normalize_text(None), "")
+        self.assertEqual(normalize_text("  보통 텍스트  "), "보통 텍스트")
 
 
 IRIS_LI = (

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -40,7 +41,7 @@ class NoticeRecord:
 def normalize_text(s: str | None) -> str:
     if not s:
         return ""
-    return re.sub(r"\s+", " ", str(s)).strip()
+    return re.sub(r"\s+", " ", html.unescape(str(s))).strip()
 
 
 def parse_deadline(value: str | None) -> str:
