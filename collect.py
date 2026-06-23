@@ -27,9 +27,14 @@ ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapt
 
 
 def collect_all() -> list[RawNotice]:
+    # 어댑터별 격리: 한 소스 실패가 전체 실행을 죽이지 않게 건너뛰고 나머지 진행.
+    # (해외 CI IP에서 IRIS(www.iris.go.kr) 연결 차단 실측 2026-06-23)
     raws: list[RawNotice] = []
     for cls in ADAPTERS:
-        raws += cls().collect()
+        try:
+            raws += cls().collect()
+        except Exception as e:
+            print(f"[warn] {cls.__name__} 수집 실패, 건너뜀: {e}", file=sys.stderr)
     return raws
 
 

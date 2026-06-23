@@ -72,6 +72,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Project-Specific Gotchas
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
+- 외부 소스 수집은 `collect_all`에서 어댑터별 try/except로 격리 — 한 소스 실패가 전체 실행을 죽이지 않게. (해외 GitHub Actions IP는 IRIS `www.iris.go.kr` 연결 차단됨 실측 2026-06-23. data.go.kr 4종은 정상.)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 써라" 같은 추상 표현 금지 -->

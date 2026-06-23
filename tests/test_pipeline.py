@@ -438,5 +438,26 @@ class TestServe(unittest.TestCase):
             os.unlink(path)
 
 
+class TestCollectIsolation(unittest.TestCase):
+    def test_one_adapter_failure_isolated(self):  # 한 소스 실패가 전체 수집을 죽이지 않음
+        import collect
+
+        class Boom:
+            def collect(self):
+                raise RuntimeError("source down")
+
+        class Good:
+            def collect(self):
+                return [RawNotice("kstartup", {"x": 1})]
+
+        orig = collect.ADAPTERS
+        collect.ADAPTERS = [Boom, Good]
+        try:
+            raws = collect.collect_all()
+        finally:
+            collect.ADAPTERS = orig
+        self.assertEqual([r.source for r in raws], ["kstartup"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
