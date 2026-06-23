@@ -139,17 +139,27 @@ IRIS 스크래퍼(`/contents/retrieveBsnsAncmListView.do`)를 **같은 어댑터
 design "Open Questions" + data_source_research §7. 추측 금지, 실호출로 확정:
 
 1. ~~**★ 소스별 접수마감일 필드 존부**~~ — **실측 완료(2026-06-22)**. K-Startup `pbanc_rcpt_end_dt`(YYYYMMDD)·기업마당 미러 `신청종료일자`(YYYY-MM-DD)·나라장터 입찰 `bidClseDt`(YYYY-MM-DD HH:MM:SS)·개방표준 `bidClseDate`+`bidClseTm` 모두 confirmed. **과기정통부는 마감일 필드 없음**(`pressDt` 게시일만) → 신규 알림만. **중소벤처24는 LINK 타입이라 endpoint 미확보 → 실측 보류**(연계 API 가이드 PDF 필요). 정규화 레이어는 마감일 4개 포맷 + 한글/영문 키를 모두 처리해야 함.
-2. **API 응답 스키마 실호출 검증**: 영문 필드명·페이징. 5개 공고 API 모두 지원금액을 정형 숫자 필드로 노출하지 않음 → 금액은 2단계.
+2. ~~**API 응답 스키마 실호출 검증**~~ — **실측 완료(2026-06-22)**. serviceKey 1개로 4개 어댑터(kstartup/bizinfo/msit/nara) 전부 라이브 호출 200, 정규화 통과 확인. 5개 공고 API 모두 지원금액을 정형 숫자 필드로 노출하지 않음 → 금액은 2단계. **bizinfo(odcloud) 연속호출 rate-limit 발견 → 페이지 간 0.8s 지연 적용**(data_source_research bizinfo 항목).
 3. **cross-source 중복 판정**: 동일 공고가 K-Startup API와 IRIS에 다른 ID로 뜰 때 title+agency 정규화 매칭이 충분한지 실데이터 검증.
 4. ~~기업마당 crtfcKey 발급 절차~~ — **1주차는 미러 `3034791` 채택으로 해소**. crtfcKey 발급(IP/시스템URL 등록·일일 호출제한)은 2차로 이월.
 5. **IRIS 목록 페이지네이션(GET/POST)·IP rate-limit/차단** 여부(2주차 착수 전).
-6. **SMTP 자격증명·발신 주소·수신자 목록** 확정(Actions Secrets).
+6. **SMTP 자격증명·발신 주소·수신자 목록** — Gmail(cyon13022) 채택. host/port/user/from/to 확정, 로컬 `.env` 기록. 발신엔 **Gmail 앱 비밀번호** 필요. Actions Secrets에 7종(`SERVICE_KEY`·`SMTP_*`·`MAIL_*`) 등록 → `workflow_dispatch` 수동 실행으로 클라우드 실검증(경로 B).
 
 ## The Assignment (다음 실행 1개)
 
-**data.go.kr에서 K-Startup 공고 API(15125364) serviceKey를 발급받아 1회 호출해 응답 JSON을 저장하라.** 목적: 위 블로커 1·2순위(마감일 필드 존부·응답 스키마·페이징)를 실측으로 확정. 이 한 번의 실호출이 어댑터 인터페이스의 첫 계약(필드 매핑)을 확정한다. 결과 샘플은 `data_source_research.md`의 "운영 전 확정 사항"에 출처와 함께 기록.
+~~**data.go.kr에서 K-Startup 공고 API(15125364) serviceKey를 발급받아 1회 호출해 응답 JSON을 저장하라.**~~ — **완료(2026-06-22)**. serviceKey 발급·`.env` 저장 후 4개 어댑터 전부 라이브 호출 검증. K-Startup 어댑터 첫 계약을 실데이터로 확정(`kstartup:178198` 등).
+
+## 구현 진행 현황 (2026-06-22)
+
+| 단계 | 상태 | 근거 |
+|---|---|---|
+| serviceKey 발급·저장 | ✅ | `.env`(gitignore). 4개 소스 공용 1키 |
+| 4개 어댑터 라이브 검증 | ✅ | kstartup 5000·bizinfo 4996·msit 486·nara 4471건 실수집. bizinfo rate-limit 수정 |
+| 파이프라인 dry-run | ✅ | 1차 신규 615·임박 55 → 2차 재수집 신규 0·수정 0·임박 0 (AC#1/#3/#4/#5/#6). 테스트 19개 무회귀 |
+| 이메일 실발송(AC#2) | ⏳ | **경로 B**: Actions Secrets 7종 등록 후 `workflow_dispatch` 수동 실행으로 검증 |
 
 ## 다음 단계
 
-- 구현 착수 전: 블로커 1~2번 실측(The Assignment) → 어댑터 계약 확정.
-- 어댑터 계약·테스트 엣지케이스 락인이 필요하면 `/plan-eng-review` 재개(이번 세션에서 시작했다 spec 우선으로 전환).
+- **경로 B 실행**: Actions Secrets에 `SERVICE_KEY`·`SMTP_HOST`·`SMTP_PORT`·`SMTP_USER`·`SMTP_PASS`·`MAIL_FROM`·`MAIL_TO` 7종 등록 → repo Actions 탭 → collect → Run workflow. 첫 실행은 빈 DB라 전 공고가 "신규"로 큰 메일 1통(정상), 둘째부터 증분.
+- 2주차: IRIS 스크래퍼 추가(블로커 5번 선행).
+- 어댑터 계약·테스트 엣지케이스 락인이 필요하면 `/plan-eng-review` 재개.

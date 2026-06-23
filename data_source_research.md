@@ -161,6 +161,7 @@
   - **파라미터**: `page`·`perPage`·`serviceKey`·`returnType=JSON`. 메타 `totalCount`/`matchCount`(97,794)·`currentCount`·`page`·`perPage`.
   - **필드(한글 키)**: 번호·분야·사업명·신청시작일자·`신청종료일자`·소관기관·수행기관·등록일자·상세URL. **마감일 `신청종료일자` = `YYYY-MM-DD`(하이픈)** — K-Startup의 `pbanc_rcpt_end_dt` YYYYMMDD와 포맷·키 언어 다름 → 정규화 레이어가 양쪽 처리 필요.
   - **신선도 한계**: 데이터는 2025-03-31 스냅샷(등록일자 다 2025-03-27). 연간 갱신이라 실시간 아님 → 1주차 포함(사용자 결정 B), 실시간성은 2차 crtfcKey API로 보강. 샘플 `samples/bizinfo_mirror.json`.
+  - **★ rate-limit 실측(2026-06-22)**: odcloud은 **연속 호출을 차단** — 페이지 간 간격 없이 호출 시 5페이지째 `{"code":-999,"msg":"UNKNOWN"}` HTTP 400. **페이지 간 0.6s↑ 지연이면 통과**(검증: 0.3s 실패, 0.6s 12/12 OK). 어댑터에 `PAGE_DELAY_SEC=0.8` 적용(`adapters/bizinfo.py`). 다른 소스(kstartup/nara/msit)는 50페이지 연속 호출에도 정상.
 - **과기정통부(15074634) — 실측 confirmed.** 엔드포인트 `apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList`,
   `serviceKey`·`pageNo`·`numOfRows`. **WAF가 User-Agent 없는 요청을 400 Request Blocked로 차단 → 브라우저 UA 헤더 필수.** 응답 XML 고정(type=json 무시).
   - 필드: `subject`·`viewUrl`·`deptName`·`managerName`·`managerTel`·`pressDt`(게시일)·`files`(fileName/fileUrl). totalCount 4,162.
