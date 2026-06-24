@@ -52,6 +52,7 @@ PAGE = """<!DOCTYPE html>
     font-size: .75rem; font-weight: 600; white-space: nowrap; }
   .chip.open { background: #e3f4e8; color: #0a7d33; }
   .chip.closed { background: #eee; color: #666; }
+  .chip.na { background: #f3f3f3; color: #999; }
   .spec { background: #efe8f7; color: #5a3a8a; margin-left: .4rem; }
   .meta { color: #555; font-size: .8rem; margin-top: .2rem; }
   mark { background: #fff3a3; color: inherit; padding: 0 .1rem; }
@@ -255,18 +256,17 @@ function render() {
     }
     tr.appendChild(tdDl);
 
-    // 상태 칩: Y→접수중, N→마감, 그 외엔 과거 마감일만 마감(추측 안 함)
+    // 상태 칩: 출처가 준 접수상태만 표시. Y→접수중, N→마감, 안 주면 미제공 명시(추측 안 함)
     const tdStatus = document.createElement('td');
     tdStatus.dataset.label = '상태';
-    let chipText = '', chipCls = '';
+    let chipText, chipCls;
     if (d.status === 'Y') { chipText = '접수중'; chipCls = 'open'; }
     else if (d.status === 'N') { chipText = '마감'; chipCls = 'closed'; }
-    else if (dd !== null && dd < 0) { chipText = '마감'; chipCls = 'closed'; }
-    if (chipText) {
-      const chip = document.createElement('span');
-      chip.className = 'chip ' + chipCls; chip.textContent = chipText;
-      tdStatus.appendChild(chip);
-    }
+    else { chipText = '미제공'; chipCls = 'na'; }
+    const chip = document.createElement('span');
+    chip.className = 'chip ' + chipCls; chip.textContent = chipText;
+    if (chipCls === 'na') chip.title = '이 기관은 접수상태를 제공하지 않습니다(마감 여부는 마감일 참고)';
+    tdStatus.appendChild(chip);
     tr.appendChild(tdStatus);
 
     // 원문 바로가기
