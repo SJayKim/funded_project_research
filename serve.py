@@ -55,7 +55,7 @@ const sel = document.getElementById('cat');
 sel.innerHTML = '<option value="__TECH__" selected>기술 전체</option>'
   + '<option value="__ALL__">전체</option>'
   + cats.map(c => '<option value="' + c + '">' + c + '</option>').join('');
-let sortAsc = true;
+let sortAsc = false;
 function render() {
   const q = document.getElementById('q').value.trim().toLowerCase();
   const cat = sel.value;
