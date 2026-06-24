@@ -52,7 +52,20 @@ PAGE = """<!DOCTYPE html>
     font-size: .75rem; font-weight: 600; white-space: nowrap; }
   .chip.open { background: #e3f4e8; color: #0a7d33; }
   .chip.closed { background: #eee; color: #666; }
+  .spec { background: #efe8f7; color: #5a3a8a; margin-left: .4rem; }
+  .meta { color: #555; font-size: .8rem; margin-top: .2rem; }
+  mark { background: #fff3a3; color: inherit; padding: 0 .1rem; }
+  #empty { color: #666; padding: 1rem 0; }
   :focus-visible { outline: 2px solid #0a58ca; outline-offset: 1px; }
+  /* 뷰 토글: 데스크톱에서도 카드 레이아웃 선택(모바일은 항상 카드) */
+  table.cards, table.cards thead, table.cards tbody, table.cards th, table.cards td, table.cards tr { display: block; }
+  table.cards thead { position: absolute; left: -9999px; }
+  table.cards tbody { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: .6rem; }
+  table.cards tr { border: 1px solid #ddd; border-radius: .4rem; padding: .4rem .5rem; }
+  table.cards tr:nth-child(even) { background: #fff; }
+  table.cards td { border: none; padding: .2rem 0; }
+  table.cards td[data-label]::before { content: attr(data-label) ": "; font-weight: 600; color: #888; }
+  table.cards td.notitle::before { content: ""; }
   /* 모바일: 테이블 → 카드 reflow(KRDS 모바일 표 수직 재배치) */
   @media (max-width: 700px) {
     body { margin: .8rem; }
@@ -81,6 +94,10 @@ PAGE = """<!DOCTYPE html>
     <option value="soon">마감임박(D-7)</option>
     <option value="new">신규</option>
   </select>
+  <select id="layout" aria-label="레이아웃">
+    <option value="table" selected>테이블</option>
+    <option value="cards">카드</option>
+  </select>
   <span id="count" aria-live="polite"></span>
 </div>
 <table>
@@ -91,6 +108,7 @@ PAGE = """<!DOCTYPE html>
   </tr></thead>
   <tbody id="rows"></tbody>
 </table>
+<div id="empty" role="status" hidden>검색 결과가 없습니다. 검색어나 필터를 바꿔보세요.</div>
 <script>
 const DATA = __DATA__;
 const SRC = { kstartup: 'K-Startup', bizinfo: '기업마당', msit: '과기정통부', nara: '나라장터', iris: 'IRIS' };
@@ -99,6 +117,21 @@ const refDate = DATA.reduce((m, d) => (d.last_seen > m ? d.last_seen : m), '').s
 function diffDays(fromYmd, toYmd) {
   if (!fromYmd || !toYmd) return null;
   return Math.round((new Date(toYmd + 'T00:00:00') - new Date(fromYmd + 'T00:00:00')) / 86400000);
+}
+// 검색 하이라이트: q(소문자) 매칭 부분만 <mark>로, 나머지는 textContent(XSS 안전)
+function hl(parent, text, q) {
+  text = text || '';
+  if (!q) { parent.appendChild(document.createTextNode(text)); return; }
+  const lower = text.toLowerCase();
+  let i = 0, idx;
+  while ((idx = lower.indexOf(q, i)) !== -1) {
+    if (idx > i) parent.appendChild(document.createTextNode(text.slice(i, idx)));
+    const m = document.createElement('mark');
+    m.textContent = text.slice(idx, idx + q.length);
+    parent.appendChild(m);
+    i = idx + q.length;
+  }
+  if (i < text.length) parent.appendChild(document.createTextNode(text.slice(i)));
 }
 // 신뢰 배너 채우기: 정확 건수 + 출처별 분포 + 갱신일
 document.getElementById('total').textContent = DATA.length.toLocaleString();
@@ -137,7 +170,7 @@ function render() {
     if (view === 'soon') { const dd = ddayInfo(d).days; if (dd === null || dd < 0 || dd > 7) return false; }
     else if (view === 'new') { if (!isNew(d)) return false; }
     if (q) {
-      const hay = (d.title + ' ' + d.summary + ' ' + d.agency).toLowerCase();
+      const hay = (d.title + ' ' + d.summary + ' ' + d.agency + ' ' + d.target + ' ' + d.specialized_agency).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -169,16 +202,31 @@ function render() {
     tdTitle.className = 'notitle';
     const titleSpan = document.createElement('span');
     titleSpan.className = 'title';
-    titleSpan.textContent = d.title || '';
+    hl(titleSpan, d.title, q);
     tdTitle.appendChild(titleSpan);
     if (isNew(d)) {
       const nb = document.createElement('span');
       nb.className = 'badge new'; nb.textContent = 'NEW';
       tdTitle.appendChild(nb);
     }
+    // 전문/전담기관 배지(보유 출처만)
+    if (d.specialized_agency) {
+      const sb = document.createElement('span');
+      sb.className = 'badge spec'; sb.textContent = d.specialized_agency;
+      tdTitle.appendChild(sb);
+    }
+    // 신청자격(target, kstartup만 보유) 메타라인
+    if (d.target) {
+      const tg = document.createElement('div');
+      tg.className = 'meta';
+      tg.appendChild(document.createTextNode('신청자격: '));
+      hl(tg, d.target, q);
+      tdTitle.appendChild(tg);
+    }
     if (d.summary) {
       const sm = document.createElement('div');
-      sm.className = 'summary'; sm.textContent = d.summary;
+      sm.className = 'summary';
+      hl(sm, d.summary, q);
       tdTitle.appendChild(sm);
     }
     tr.appendChild(tdTitle);
@@ -186,7 +234,7 @@ function render() {
     // 소관부처
     const tdAgency = document.createElement('td');
     tdAgency.dataset.label = '소관부처';
-    tdAgency.textContent = d.agency || '';
+    hl(tdAgency, d.agency, q);
     tr.appendChild(tdAgency);
 
     // 마감: D-day 배지 + 날짜, 빈값은 대시(KRDS 빈셀 규칙)
@@ -234,10 +282,17 @@ function render() {
     tb.appendChild(tr);
   }
   document.getElementById('count').textContent = rows.length.toLocaleString() + '건';
+  document.getElementById('empty').hidden = rows.length !== 0;
 }
 document.getElementById('q').addEventListener('input', render);
 sel.addEventListener('change', render);
 viewSel.addEventListener('change', render);
+// 레이아웃 토글: 재렌더 없이 table에 cards 클래스만 토글(모바일은 CSS가 항상 카드)
+const layoutSel = document.getElementById('layout');
+const tableEl = document.querySelector('table');
+layoutSel.addEventListener('change', () => {
+  tableEl.classList.toggle('cards', layoutSel.value === 'cards');
+});
 document.getElementById('th-deadline').addEventListener('click', () => { sortAsc = !sortAsc; render(); });
 render();
 </script>
