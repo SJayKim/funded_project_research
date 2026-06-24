@@ -12,10 +12,15 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   collect:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,3 +64,17 @@ jobs:
           git add gov_notices.db
           git commit -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "no changes"
           git push origin data
+
+      - name: Build static dashboard
+        run: |
+          mkdir -p site
+          python serve.py --build site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

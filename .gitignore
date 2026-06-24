@@ -11,6 +11,9 @@ CLAUDE.local.md
 gov_notices.db
 __pycache__/
 
+# Pages 빌드 산출물 (CI에서 생성, 커밋 안 함)
+site/
+
 # 작업 임시 파일
 *.tmp
 ~$*

@@ -137,6 +137,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    # --build <path>: HTTP 서버 대신 정적 HTML 1장을 파일로 써서 종료(Pages 배포용).
+    if "--build" in sys.argv:
+        out = sys.argv[sys.argv.index("--build") + 1]
+        html = render_page(fetch_notices(DB_PATH))
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"wrote {out} ({len(html)} bytes)")
+        return
     if not os.path.exists(DB_PATH):
         print(f"DB 없음: {DB_PATH}\n"
               f"(CI DB 보려면: git show origin/data:gov_notices.db > gov_notices.db)")
