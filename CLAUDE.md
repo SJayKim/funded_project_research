@@ -73,6 +73,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## Project-Specific Gotchas
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
 - 외부 소스 수집은 `collect_all`에서 어댑터별 try/except로 격리 — 한 소스 실패가 전체 실행을 죽이지 않게. (해외 GitHub Actions IP는 IRIS `www.iris.go.kr` 연결 차단됨 실측 2026-06-23. data.go.kr 4종은 정상.)
+- 상세페이지 fetch host는 목록 API host와 다름 — enrich가 쓰는 상세 host(`www.k-startup.go.kr`·`www.bizinfo.go.kr` 등)도 `adapters/base._TLS_RELAXED_HOSTS`에 등록해야 AKI 누락 cert가 통과. http_get를 stub하는 단위테스트는 이 갭을 못 잡으니 신규 fetch 경로는 실 fetch 1회로 검증할 것. (실측 2026-06-26: 미등록 시 enrich 100% CERTIFICATE_VERIFY_FAILED.)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 써라" 같은 추상 표현 금지 -->

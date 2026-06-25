@@ -48,6 +48,8 @@ _TLS_RELAXED_HOSTS = frozenset({
     "apis.data.go.kr",
     "api.odcloud.kr",
     "www.iris.go.kr",
+    "www.k-startup.go.kr",   # 상세페이지 fetch(enrich) — AKI 누락, 실측 2026-06-26
+    "www.bizinfo.go.kr",     # 상세페이지 fetch(enrich) — AKI 누락, 실측 2026-06-26
 })
 
 
