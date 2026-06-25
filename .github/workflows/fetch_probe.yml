@@ -1,0 +1,39 @@
+name: fetch-probe
+
+# Approach A 다음작업 1번: 상세페이지가 GitHub Actions 러너(해외 IP·쿠키없음·Ubuntu)에서
+# fetch되는지 실측. iris(www.iris.go.kr)는 해외 IP 차단 의심 → 여기서만 확인 가능.
+# 수동 dispatch 전용, 일일 collect 런과 분리. DB·메일·커밋 부작용 없음.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Probe detail-page fetch
+        run: |
+          python - <<'PY'
+          import urllib.request, ssl, re, html
+          ctx = ssl.create_default_context()
+          UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
+          tests = [
+            ('kstartup', 'https://www.k-startup.go.kr/web/contents/bizpbanc-deadline.do?schM=view&pbancSn=172700'),
+            ('bizinfo',  'https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000101596'),
+            ('msit',     'https://www.msit.go.kr/bbs/view.do?sCode=user&mId=311&mPid=121&bbsSeqNo=100&nttSeqNo=3179651'),
+            ('iris',     'https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId=021938'),
+          ]
+          for name, url in tests:
+              try:
+                  req = urllib.request.Request(url, headers={'User-Agent': UA})
+                  with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
+                      body = r.read()
+                  txt = re.sub(r'<[^>]+>', ' ', body.decode('utf-8', 'replace'))
+                  visible = len(re.sub(r'\s+', ' ', html.unescape(txt)).strip())
+                  print(f'[{name}] OK status={r.status} bytes={len(body)} visible={visible}')
+              except Exception as e:
+                  print(f'[{name}] FAIL {type(e).__name__}: {e}')
+          PY
