@@ -19,6 +19,7 @@ site/
 
 # 작업 임시 파일
 *.tmp
+dashboard-top.jpeg
 ~$*
 .DS_Store
 Thumbs.db
