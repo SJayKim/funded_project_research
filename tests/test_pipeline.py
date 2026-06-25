@@ -471,6 +471,16 @@ class TestExtract(unittest.TestCase):
         ac.post_message = boom
         self.assertEqual(extract.extract("x", "test-key"), ({}, "failed"))
 
+    def test_verify_drops_non_substring(self):  # §5 환각 차단
+        import extract
+        body = "지원규모 3억원, 신청자격 중소기업"
+        vals = {"funding_amount": "3억원", "eligibility": "대기업",  # 대기업=원문에 없음→버림
+                "required_docs": "", "key_dates": "환각일정"}
+        out = extract.verify(vals, body)
+        self.assertEqual(out["funding_amount"], "3억원")
+        self.assertEqual(out["eligibility"], "")
+        self.assertEqual(out["key_dates"], "")
+
 
 class TestHtmlToText(unittest.TestCase):
     def test_strips_tags_scripts_and_decodes(self):
@@ -505,7 +515,9 @@ class TestEnrich(unittest.TestCase):
         self._orig_corpus = collect.CORPUS_DIR
         collect.CORPUS_DIR = self._tmp
         self._orig_get = collect.http_get
-        collect.http_get = lambda url, timeout=20: b"<p>body</p>"
+        # 본문에 추출값이 들어있어야 substring 검증(extract.verify) 통과
+        collect.http_get = lambda url, timeout=20: (
+            "<p>지원규모 3억 신청자격 중소기업 제출서류 사업계획서 일정 7월</p>".encode())
         self._orig_extract = extract.extract
         extract.extract = lambda body, key: (
             {"funding_amount": "3억", "eligibility": "중소기업",
@@ -567,6 +579,18 @@ class TestEnrich(unittest.TestCase):
         out = collect.enrich(self.store)
         self.assertTrue(out.get("skipped_no_key"))
         self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")
+
+    def test_hallucinated_values_dropped_to_no_info(self):
+        import collect, extract
+        # 본문엔 없는 값만 추출 → substring 전부 탈락 → no_info, 값 공란
+        extract.extract = lambda body, key: (
+            {"funding_amount": "100억(환각)", "eligibility": "", "required_docs": "",
+             "key_dates": ""}, "ok")
+        self._seed([_erec("kstartup", "1")])
+        collect.enrich(self.store)
+        loaded = self.store.load()["kstartup:1"]
+        self.assertEqual(loaded.extraction_status, "no_info")
+        self.assertEqual(loaded.funding_amount, "")
 
 
 class TestTechFiltering(unittest.TestCase):
