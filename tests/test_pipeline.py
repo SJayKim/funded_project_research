@@ -593,6 +593,63 @@ class TestEnrich(unittest.TestCase):
         self.assertEqual(loaded.funding_amount, "")
 
 
+class TestEvalScoring(unittest.TestCase):
+    """eval_extract.score: 모델 없이 결정적 채점 로직만 검증."""
+
+    def _fx(self, expected, golden=None):
+        return {"source": "x", "id": "1", "expected_status": expected,
+                "golden": golden or {"funding_amount": "", "eligibility": "",
+                                     "required_docs": "", "key_dates": ""}}
+
+    def test_no_info_pass_when_empty(self):
+        import eval_extract
+        r = eval_extract.score(self._fx("no_info"),
+                               {"funding_amount": "", "eligibility": "",
+                                "required_docs": "", "key_dates": ""}, "no_info")
+        self.assertTrue(r["passed"])
+
+    def test_no_info_fail_on_hallucination(self):
+        import eval_extract
+        r = eval_extract.score(self._fx("no_info"),
+                               {"funding_amount": "100억", "eligibility": "",
+                                "required_docs": "", "key_dates": ""}, "no_info")
+        self.assertFalse(r["passed"])  # 음성케이스인데 값 추출 → fail
+
+    def test_ok_pass_on_golden_overlap(self):
+        import eval_extract
+        fx = self._fx("ok", {"funding_amount": "최대 3억원", "eligibility": "",
+                             "required_docs": "", "key_dates": ""})
+        r = eval_extract.score(fx, {"funding_amount": "지원규모 최대 3억원", "eligibility": "",
+                                    "required_docs": "", "key_dates": ""}, "ok")
+        self.assertTrue(r["passed"])   # golden ⊂ 추출값 → 겹침 인정
+
+    def test_ok_fail_on_missing_field(self):
+        import eval_extract
+        fx = self._fx("ok", {"funding_amount": "3억원", "eligibility": "",
+                             "required_docs": "", "key_dates": ""})
+        r = eval_extract.score(fx, {"funding_amount": "", "eligibility": "",
+                                    "required_docs": "", "key_dates": ""}, "ok")
+        self.assertFalse(r["passed"])  # golden 있는데 미추출
+
+    def test_status_mismatch_fails(self):
+        import eval_extract
+        r = eval_extract.score(self._fx("no_info"), {}, "ok")
+        self.assertFalse(r["passed"])
+
+
+@unittest.skipUnless(os.environ.get("ANTHROPIC_API_KEY"), "실모델 EVAL: API 키 필요(유료)")
+class TestExtractEvalLive(unittest.TestCase):
+    """fixture 전체에 실모델 추출 — 키 있을 때만(일반 런 skip). 음성케이스 환각 0 검증."""
+
+    def test_all_fixtures_pass(self):
+        import eval_extract
+        fixtures = eval_extract.load_fixtures()
+        self.assertTrue(fixtures, "fixture 없음")
+        results = eval_extract.run(fixtures, os.environ["ANTHROPIC_API_KEY"])
+        fails = [r for r in results if not r["passed"]]
+        self.assertEqual(fails, [], f"EVAL 실패: {fails}")
+
+
 class TestTechFiltering(unittest.TestCase):
     def setUp(self):
         self.store = Store(":memory:")

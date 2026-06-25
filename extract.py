@@ -75,3 +75,12 @@ def extract(body_text: str, api_key: str) -> tuple[dict[str, str], str]:
 def verify(vals: dict[str, str], body: str) -> dict[str, str]:
     """추출값이 원문(body)에 실제로 있는지 substring 검증. 없는 값은 버림(환각 차단, §5)."""
     return {f: (v if v and v in body else "") for f, v in vals.items()}
+
+
+def extract_verified(body: str, api_key: str) -> tuple[dict[str, str], str]:
+    """extract + substring verify + 전부탈락 시 no_info 강등. enrich·EVAL 공용."""
+    vals, status = extract(body, api_key)
+    vals = verify(vals, body)
+    if status == "ok" and not any(vals.values()):
+        status = "no_info"
+    return vals, status

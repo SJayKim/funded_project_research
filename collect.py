@@ -128,10 +128,7 @@ def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
         try:
             body = extract.html_to_text(http_get(rec.url, timeout=20))
             _save_corpus(rec, body)
-            vals, status = extract.extract(body, api_key)
-            vals = extract.verify(vals, body)  # 원문 substring 통과분만(환각 차단, §5)
-            if status == "ok" and not any(vals.values()):
-                status = "no_info"             # 전부 검증 탈락 → 정보없음
+            vals, status = extract.extract_verified(body, api_key)  # 추출+substring검증+강등
             for f, v in vals.items():
                 setattr(rec, f, v)
             rec.extraction_status = status
