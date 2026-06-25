@@ -55,6 +55,10 @@ PAGE = """<!DOCTYPE html>
   .chip.na { background: #f3f3f3; color: #999; }
   .spec { background: #efe8f7; color: #5a3a8a; margin-left: .4rem; }
   .meta { color: #555; font-size: .8rem; margin-top: .2rem; }
+  /* 추출 발췌: 원문 인용(단정 금지). 인용임을 좌측 보더로 시각화 */
+  .excerpt { color: #444; font-size: .8rem; margin-top: .15rem;
+    border-left: 2px solid #cfe0f2; padding-left: .4rem; }
+  .excerpt b { color: #1b4d8a; font-weight: 600; }
   mark { background: #fff3a3; color: inherit; padding: 0 .1rem; }
   #empty { color: #666; padding: 1rem 0; }
   :focus-visible { outline: 2px solid #0a58ca; outline-offset: 1px; }
@@ -229,6 +233,21 @@ function render() {
       sm.className = 'summary';
       hl(sm, d.summary, q);
       tdTitle.appendChild(sm);
+    }
+    // Approach A 추출 4필드: 원문 발췌만 표시(단정 금지). status=ok일 때만.
+    if (d.extraction_status === 'ok') {
+      const EX = [['funding_amount', '지원금액'], ['eligibility', '신청자격'],
+                  ['required_docs', '제출서류'], ['key_dates', '주요일정']];
+      for (const [f, label] of EX) {
+        if (!d[f]) continue;
+        const ex = document.createElement('div');
+        ex.className = 'excerpt';
+        const b = document.createElement('b');
+        b.textContent = label + ' 발췌: ';
+        ex.appendChild(b);
+        hl(ex, d[f], q);
+        tdTitle.appendChild(ex);
+      }
     }
     tr.appendChild(tdTitle);
 

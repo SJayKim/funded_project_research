@@ -618,6 +618,27 @@ class TestServe(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_extracted_fields_roundtrip(self):  # 추출 4필드 + status가 fetch→embed에 실림
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            s = Store(path)
+            r = NoticeRecord(source="kstartup", source_id="9", title="딥테크 공고", url="u",
+                             is_tech="1", funding_amount="최대 3억원", eligibility="중소기업",
+                             required_docs="사업계획서", key_dates="2026.7.1~7.31",
+                             extraction_status="ok", extracted_from="u")
+            s.upsert(r, "2026-06-25T00:00:00")
+            s.commit()
+            s.close()
+            notices = serve.fetch_notices(path)
+            self.assertEqual(notices[0]["funding_amount"], "최대 3억원")
+            self.assertEqual(notices[0]["extraction_status"], "ok")
+            html = serve.render_page(notices)
+            self.assertIn("최대 3억원", html)            # 값 임베드
+            self.assertIn("발췌", html)                  # '발췌' 라벨 렌더 블록 존재
+        finally:
+            os.unlink(path)
+
 
 class TestCollectIsolation(unittest.TestCase):
     def test_one_adapter_failure_isolated(self):  # 한 소스 실패가 전체 수집을 죽이지 않음
