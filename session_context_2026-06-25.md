@@ -1,6 +1,21 @@
 # 세션 컨텍스트 — 2026-06-25
 
-**브랜치**: main · **상태**: in-progress · **배포**: origin/main = 로컬 main = `47221be` · **코드 변경 없음**(설계 세션)
+**브랜치**: main · **상태**: in-progress · **배포**: origin/main = 로컬 main = `0c3dc6c`
+
+> ## 갱신 — 2026-06-25 (저녁, 구현 세션)
+>
+> 아침은 설계 세션(아래). 저녁에 "다음 작업 1번 후속" 3건을 차례로 구현.
+>
+> **1. iris CI fetch probe — 미완(사용자 액션 대기).** 이 PC는 한국 IP라 해외 IP 차단 재현 불가, `gh`도 미설치 → dispatch·로그 관측 불가. 사용자가 GitHub→Actions→`fetch-probe` Run workflow 하거나 `gh` 설치 필요. 결과가 `iris FAIL`이면 감사 §3 분기대로 iris 추출 경로 재설계.
+>
+> **2. EVAL 양성 fixture 6건 — 완료·커밋(`0c3dc6c`).** kstartup·bizinfo·iris 상세 실측 fetch 후 golden 4필드를 본문 verbatim 발췌로 확정. `tests/fixtures/extract/`에 6건 작성, ""(첨부에만)은 substring 자동검증으로 환각 골든 차단. score() 8/8 PASS, 전체 61 테스트 통과.
+>   - **실측 정정(중요): 감사 §1·§4가 iris를 "공고문 전문 인라인·커버리지 최상"으로 본 건 과대평가.** 두 iris 페이지 모두 인라인 ■공고문은 표지(공고하오니…장관)뿐 — 금액은 RFP(붙임1), 제출서류는 '제출서류 목록.pdf' 첨부에만. iris HTML-first 실커버리지 = `접수기간✓ / 자격△(일반문구) / 금액·서류✗` 로 **"중"**(msit보다 약간 나음). → 감사 문서 본문 §1·§4 표 미정정(다음 작업).
+>
+> **3. extract tools-on-body 재확인 — 완료(정적).** `extract.py:3-4`에 실측 기록 존재(Opus 4.8 body에 tools+tool_choice 허용, stop_reason=tool_use). 단위테스트가 body 계약 커버(test_pipeline.py:442-460). 라이브 재검증은 `ANTHROPIC_API_KEY` 필요 → `ANTHROPIC_API_KEY=... PYTHONUTF8=1 python eval_extract.py` (새 fixture 6건 엔드투엔드 동시 검증).
+>
+> **저녁 세션 다음 작업**: (a) iris CI probe dispatch 후 분기, (b) 감사 §1·§4 iris 표 정정, (c) 키 확보 시 eval_extract.py 라이브 1회 — 프롬프트 회귀 베이스라인 확보.
+
+---
 
 ## 작업 내용: 서비스 AI 활용 기능 설계 (/office-hours) — 첫 AI 웨지 "첨부 파싱" 확정
 
