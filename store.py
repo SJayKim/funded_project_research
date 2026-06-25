@@ -15,7 +15,12 @@ DEFAULT_DB = "gov_notices.db"
 _COLS = [f.name for f in fields(NoticeRecord)]
 
 # 구 DB(data 브랜치)엔 없던 컬럼. 마이그레이션으로 ALTER 추가한다.
-NEW_COLUMNS = ("category", "summary", "is_tech")
+NEW_COLUMNS = (
+    "category", "summary", "is_tech",
+    # Approach A 추출 6필드
+    "funding_amount", "eligibility", "required_docs",
+    "key_dates", "extracted_from", "extraction_status",
+)
 
 
 class Store:

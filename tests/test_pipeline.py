@@ -13,6 +13,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import anthropic_client
 import classify
 import diff
 import notify_email
@@ -271,11 +272,17 @@ class TestClassify(unittest.TestCase):
         self.assertEqual((cat, tech), ("기타", "0"))
 
 
+# NEW_COLUMNS 전부(요약/분류 3 + Approach A 추출 6)가 마이그레이션으로 커버돼야 함(설계 §4 CRITICAL)
+_MIGRATED_COLS = {"category", "summary", "is_tech",
+                  "funding_amount", "eligibility", "required_docs",
+                  "key_dates", "extracted_from", "extraction_status"}
+
+
 class TestStoreMigration(unittest.TestCase):
     def test_fresh_has_new_columns(self):
         s = Store(":memory:")
         cols = {row["name"] for row in s.conn.execute("PRAGMA table_info(notices)")}
-        self.assertTrue({"category", "summary", "is_tech"} <= cols)
+        self.assertTrue(_MIGRATED_COLS <= cols)
         s.close()
 
     def test_alter_old_table_and_null_fill(self):  # 구 13컬럼 → ALTER + 멱등 + NULL→""
@@ -295,10 +302,12 @@ class TestStoreMigration(unittest.TestCase):
 
             s = Store(path)  # _migrate가 누락 컬럼 추가
             cols = {row["name"] for row in s.conn.execute("PRAGMA table_info(notices)")}
-            self.assertTrue({"category", "summary", "is_tech"} <= cols)
+            self.assertTrue(_MIGRATED_COLS <= cols)   # 추출 6필드까지 전부 ALTER됨
             loaded = s.load()
-            self.assertEqual(loaded["kstartup:1"].summary, "")   # NULL→""
+            self.assertEqual(loaded["kstartup:1"].summary, "")            # NULL→""
             self.assertEqual(loaded["kstartup:1"].is_tech, "")
+            self.assertEqual(loaded["kstartup:1"].funding_amount, "")     # 추출필드도 NULL→""
+            self.assertEqual(loaded["kstartup:1"].extraction_status, "")
             s.close()
 
             s2 = Store(path)  # 멱등: 재오픈 에러 없음
@@ -371,12 +380,12 @@ class TestSummarizeRequest(unittest.TestCase):
     def test_no_key_fallback_no_network(self):
         os.environ.pop("ANTHROPIC_API_KEY", None)
         called = []
-        orig = summarize.urllib.request.urlopen
-        summarize.urllib.request.urlopen = lambda *a, **k: called.append(1)
+        orig = anthropic_client.urllib.request.urlopen
+        anthropic_client.urllib.request.urlopen = lambda *a, **k: called.append(1)
         try:
             out = summarize.summarize([rec("kstartup", "1", title="AI 공고", agency="중기부")])
         finally:
-            summarize.urllib.request.urlopen = orig
+            anthropic_client.urllib.request.urlopen = orig
         self.assertEqual(called, [])              # 네트워크 호출 0
         self.assertTrue(out["kstartup:1"])        # fallback 문자열 존재
 
@@ -388,18 +397,79 @@ class TestSummarizeRequest(unittest.TestCase):
             return _FakeResp(json.dumps({"content": [{"type": "text", "text": "요약문"}]}).encode("utf-8"))
 
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
-        orig = summarize.urllib.request.urlopen
-        summarize.urllib.request.urlopen = fake
+        orig = anthropic_client.urllib.request.urlopen
+        anthropic_client.urllib.request.urlopen = fake
         try:
             out = summarize.summarize([rec("kstartup", "1", title="AI 공고", agency="중기부")])
         finally:
-            summarize.urllib.request.urlopen = orig
+            anthropic_client.urllib.request.urlopen = orig
         body = captured["body"]
         for forbidden in ("temperature", "top_p", "top_k", "budget_tokens"):
             self.assertNotIn(forbidden, body)     # Opus 4.8 계약: 보내면 400
         self.assertEqual(body["model"], summarize.MODEL)
         self.assertIn("max_tokens", body)
         self.assertEqual(out["kstartup:1"], "요약문")
+
+
+class TestExtract(unittest.TestCase):
+    """extract.extract: tool_use 응답 → 4필드+상태, body 계약, 실패/값없음 분기."""
+
+    def tearDown(self):
+        import extract
+        # 혹시 스텁이 남았으면 복구
+        import anthropic_client as ac
+        if hasattr(self, "_orig_post"):
+            ac.post_message = self._orig_post
+
+    def _stub(self, tool_input=None, content=None):
+        import anthropic_client as ac
+        self._orig_post = ac.post_message
+        self.captured = {}
+
+        def fake(body, api_key, timeout=30):
+            self.captured["body"] = body
+            if content is not None:
+                return {"content": content}
+            return {"content": [{"type": "tool_use", "name": "extract_notice", "input": tool_input}]}
+
+        ac.post_message = fake
+
+    def test_ok_extraction_and_body_contract(self):
+        import extract
+        self._stub({"funding_amount": "최대 3억원", "eligibility": "중소기업",
+                    "required_docs": "사업계획서", "key_dates": "2026.7.1~7.31"})
+        vals, status = extract.extract("○ 지원규모: 최대 3억원 ...", "test-key")
+        self.assertEqual(status, "ok")
+        self.assertEqual(vals["funding_amount"], "최대 3억원")
+        body = self.captured["body"]
+        self.assertEqual(body["tool_choice"], {"type": "tool", "name": "extract_notice"})
+        self.assertEqual(body["tools"][0]["name"], "extract_notice")
+        for forbidden in ("temperature", "top_p", "top_k", "budget_tokens"):
+            self.assertNotIn(forbidden, body)     # Opus 4.8 계약
+
+    def test_no_info_when_all_empty(self):
+        import extract
+        self._stub({"funding_amount": "", "eligibility": "", "required_docs": "", "key_dates": ""})
+        vals, status = extract.extract("본문에 4필드 없음", "test-key")
+        self.assertEqual(status, "no_info")
+        self.assertEqual(set(vals), set(extract.FIELDS))   # 키는 4개 다 존재(전부 "")
+
+    def test_failed_on_no_tool_use_block(self):
+        import extract
+        self._stub(content=[{"type": "text", "text": "거부"}])
+        vals, status = extract.extract("x", "test-key")
+        self.assertEqual((vals, status), ({}, "failed"))
+
+    def test_failed_on_exception(self):
+        import extract
+        import anthropic_client as ac
+        self._orig_post = ac.post_message
+
+        def boom(*a, **k):
+            raise RuntimeError("network down")
+
+        ac.post_message = boom
+        self.assertEqual(extract.extract("x", "test-key"), ({}, "failed"))
 
 
 class TestTechFiltering(unittest.TestCase):

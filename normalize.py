@@ -32,6 +32,13 @@ class NoticeRecord:
     category: str = ""            # classify 결과(기술분야)
     summary: str = ""             # LLM/규칙 요약(캐시)
     is_tech: str = ""             # "1"/"0" (TEXT, 스키마 일관)
+    # Approach A 추출 6필드(전부 TEXT 기본 "", WATCH 제외)
+    funding_amount: str = ""      # 지원금액 발췌
+    eligibility: str = ""         # 신청자격 발췌
+    required_docs: str = ""       # 제출서류 발췌
+    key_dates: str = ""           # 주요일정 발췌
+    extracted_from: str = ""      # 추출 출처 문서
+    extraction_status: str = ""   # ""=미시도 / ok / no_info / failed
 
     @property
     def key(self) -> str:
