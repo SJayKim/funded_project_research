@@ -11,6 +11,9 @@ CLAUDE.local.md
 gov_notices.db
 __pycache__/
 
+# 추출 원문 코퍼스 (commit DB 밖, RAG 적립용 — 설계 이슈8)
+corpus/
+
 # Pages 빌드 산출물 (CI에서 생성, 커밋 안 함)
 site/
 

@@ -6,14 +6,16 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from datetime import date, datetime
 
 import classify
 import diff
+import extract
 import notify_email
 import summarize
-from adapters.base import RawNotice
+from adapters.base import RawNotice, http_get
 from adapters.bizinfo import BizinfoAdapter
 from adapters.iris import IrisAdapter
 from adapters.kstartup import KStartupAdapter
@@ -24,6 +26,11 @@ from normalize import NoticeRecord, normalize
 from store import Store
 
 ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
+
+# Approach A enrich(2단계): 런당 추출 상한 + 추출 제외 소스 + 원문 코퍼스 경로.
+ENRICH_CAP = 100
+ENRICH_SKIP_SOURCES = ("nara", "msit")  # nara=입찰, msit=본문0/전부HWP(감사1번)
+CORPUS_DIR = "corpus"
 
 
 def collect_all() -> list[RawNotice]:
@@ -89,6 +96,51 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
     return {"new": len(new), "modified": len(modified), "imminent": len(imminent)}
 
 
+def _save_corpus(rec: NoticeRecord, body: str) -> None:
+    """추출 원문을 corpus/<source>/<source_id>.txt로 보존(commit DB 밖, .gitignore)."""
+    d = os.path.join(CORPUS_DIR, rec.source)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, f"{rec.source_id}.txt"), "w", encoding="utf-8") as f:
+        f.write(body)
+
+
+def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
+    """2단계: 신규∩기술 미추출 공고의 상세HTML 본문에서 4필드 추출(base commit 이후).
+
+    게이트 = is_tech=="1" ∩ extraction_status=="" ∩ source∉(nara,msit) ∩ url 존재.
+    상한 cap 초과분은 이월(다음 런). 공고별 try/except로 1건 실패가 전체 안 죽임.
+    fetch 예외는 status 미기록 → 다음 런 재시도(일시적 timeout 실측 2026-06-25).
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return {"enriched": 0, "dropped": 0, "skipped_no_key": True}
+
+    targets = [r for r in store.load().values()
+               if r.is_tech == "1" and r.extraction_status == ""
+               and r.source not in ENRICH_SKIP_SOURCES and r.url]
+    dropped = max(0, len(targets) - cap)
+    if dropped:
+        print(f"[enrich] 대상 {len(targets)}건 중 {cap}건 처리, {dropped}건 이월", file=sys.stderr)
+
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    enriched = 0
+    for rec in targets[:cap]:
+        try:
+            body = extract.html_to_text(http_get(rec.url, timeout=20))
+            _save_corpus(rec, body)
+            vals, status = extract.extract(body, api_key)
+            for f, v in vals.items():
+                setattr(rec, f, v)
+            rec.extraction_status = status
+            rec.extracted_from = rec.url if status != "failed" else ""
+            store.upsert(rec, now_iso)
+            enriched += 1
+        except Exception as e:  # fetch/저장 실패: status 미기록 → 다음 런 재시도
+            print(f"[enrich] {rec.key} 추출 실패, 건너뜀: {e}", file=sys.stderr)
+    store.commit()
+    return {"enriched": enriched, "dropped": dropped}
+
+
 def main() -> None:
     # --no-notify: 첫 실행 시 메일 발송 없이 DB만 시딩(전건이 '신규'로 잡혀 폭주하는 것 방지).
     # run()은 send=False여도 알림이력·레코드를 기록하므로 다음 실행부터 진짜 델타만 알린다.
@@ -97,9 +149,16 @@ def main() -> None:
     raws = collect_all()
     current = dedupe([normalize(r) for r in raws])
     summary = run(store, current, date.today(), send=send)
+    # base 스냅샷 확정 후 2단계 추출(별도 트랜잭션. 터져도 일일 스냅샷·메일 안전).
+    enr = enrich(store)
     store.close()
+    extra = "" if send else " | --no-notify(메일 생략, DB 시딩)"
+    if enr.get("skipped_no_key"):
+        extra += " | enrich 생략(API 키 없음)"
+    else:
+        extra += f" | 추출 {enr['enriched']}" + (f"(이월 {enr['dropped']})" if enr['dropped'] else "")
     print(f"수집 {len(current)}건 | 신규 {summary['new']} · 수정 {summary['modified']} · "
-          f"임박 {summary['imminent']}" + ("" if send else " | --no-notify(메일 생략, DB 시딩)"))
+          f"임박 {summary['imminent']}" + extra)
 
 
 if __name__ == "__main__":

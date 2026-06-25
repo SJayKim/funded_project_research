@@ -472,6 +472,103 @@ class TestExtract(unittest.TestCase):
         self.assertEqual(extract.extract("x", "test-key"), ({}, "failed"))
 
 
+class TestHtmlToText(unittest.TestCase):
+    def test_strips_tags_scripts_and_decodes(self):
+        import extract
+        html_in = ("<html><head><style>.x{color:red}</style>"
+                   "<script>var a='지원금 999억';</script></head>"
+                   "<body><p>지원규모: 3억원 &amp; 자격</p></body></html>")
+        out = extract.html_to_text(html_in)
+        self.assertIn("지원규모: 3억원 & 자격", out)
+        self.assertNotIn("999억", out)        # script 본문 제거
+        self.assertNotIn("color:red", out)    # style 본문 제거
+        self.assertNotIn("<", out)            # 태그 제거
+
+    def test_size_cap(self):
+        import extract
+        out = extract.html_to_text("가" * (extract.MAX_BODY_CHARS + 500))
+        self.assertEqual(len(out), extract.MAX_BODY_CHARS)
+
+
+def _erec(source, sid, is_tech="1", status="", url="u"):
+    return NoticeRecord(source=source, source_id=sid, title="t", url=url,
+                        is_tech=is_tech, extraction_status=status)
+
+
+class TestEnrich(unittest.TestCase):
+    """collect.enrich: 게이트·상한·필드세팅·코퍼스·fetch실패 재시도."""
+
+    def setUp(self):
+        import collect, extract
+        self.store = Store(":memory:")
+        self._tmp = tempfile.mkdtemp()
+        self._orig_corpus = collect.CORPUS_DIR
+        collect.CORPUS_DIR = self._tmp
+        self._orig_get = collect.http_get
+        collect.http_get = lambda url, timeout=20: b"<p>body</p>"
+        self._orig_extract = extract.extract
+        extract.extract = lambda body, key: (
+            {"funding_amount": "3억", "eligibility": "중소기업",
+             "required_docs": "사업계획서", "key_dates": "7월"}, "ok")
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+
+    def tearDown(self):
+        import collect, extract
+        collect.CORPUS_DIR = self._orig_corpus
+        collect.http_get = self._orig_get
+        extract.extract = self._orig_extract
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.store.close()
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _seed(self, recs):
+        for r in recs:
+            self.store.upsert(r, "2026-06-25T00:00:00")
+        self.store.commit()
+
+    def test_gate_only_eligible(self):
+        import collect
+        self._seed([
+            _erec("kstartup", "1"),                    # 대상
+            _erec("kstartup", "2", status="ok"),       # 이미 추출
+            _erec("bizinfo", "3", is_tech="0"),        # 비기술
+            _erec("nara", "4"),                        # 입찰 제외
+            _erec("msit", "5"),                        # msit 제외
+            _erec("iris", "6", url=""),                # url 없음
+        ])
+        out = collect.enrich(self.store)
+        self.assertEqual((out["enriched"], out["dropped"]), (1, 0))
+        loaded = self.store.load()
+        self.assertEqual(loaded["kstartup:1"].extraction_status, "ok")
+        self.assertEqual(loaded["kstartup:1"].funding_amount, "3억")
+        self.assertEqual(loaded["kstartup:1"].extracted_from, "u")
+        self.assertEqual(loaded["kstartup:2"].funding_amount, "")  # 미변경
+        self.assertTrue(os.path.exists(os.path.join(self._tmp, "kstartup", "1.txt")))
+
+    def test_cap_carryover(self):
+        import collect
+        self._seed([_erec("kstartup", str(i)) for i in range(3)])
+        out = collect.enrich(self.store, cap=2)
+        self.assertEqual((out["enriched"], out["dropped"]), (2, 1))
+
+    def test_fetch_failure_left_for_retry(self):
+        import collect
+        collect.http_get = lambda url, timeout=20: (_ for _ in ()).throw(TimeoutError("slow"))
+        self._seed([_erec("kstartup", "1")])
+        out = collect.enrich(self.store)
+        self.assertEqual(out["enriched"], 0)
+        self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")  # 재시도 대상 유지
+
+    def test_no_key_skips(self):
+        import collect
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        self._seed([_erec("kstartup", "1")])
+        out = collect.enrich(self.store)
+        self.assertTrue(out.get("skipped_no_key"))
+        self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")
+
+
 class TestTechFiltering(unittest.TestCase):
     def setUp(self):
         self.store = Store(":memory:")
