@@ -22,7 +22,7 @@ from adapters.kstartup import KStartupAdapter
 from adapters.msit import MsitAdapter
 from adapters.nara import NaraAdapter
 from dedupe import dedupe
-from normalize import NoticeRecord, normalize
+from normalize import NoticeRecord, deadline_date, normalize
 from store import Store
 
 ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
@@ -107,7 +107,7 @@ def _save_corpus(rec: NoticeRecord, body: str) -> None:
 def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
     """2단계: 신규∩기술 미추출 공고의 상세HTML 본문에서 4필드 추출(base commit 이후).
 
-    게이트 = is_tech=="1" ∩ extraction_status=="" ∩ source∉(nara,msit) ∩ url 존재.
+    게이트 = is_tech=="1" ∩ extraction_status=="" ∩ source∉(nara,msit) ∩ url ∩ 미마감(deadline 없거나 ≥오늘).
     상한 cap 초과분은 이월(다음 런). 공고별 try/except로 1건 실패가 전체 안 죽임.
     fetch 예외는 status 미기록 → 다음 런 재시도(일시적 timeout 실측 2026-06-25).
     """
@@ -115,9 +115,11 @@ def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
     if not api_key:
         return {"enriched": 0, "dropped": 0, "skipped_no_key": True}
 
+    today = date.today()
     targets = [r for r in store.load().values()
                if r.is_tech == "1" and r.extraction_status == ""
-               and r.source not in ENRICH_SKIP_SOURCES and r.url]
+               and r.source not in ENRICH_SKIP_SOURCES and r.url
+               and (deadline_date(r) is None or deadline_date(r) >= today)]  # 마감 공고는 제외(신청 불가, 추출 낭비)
     dropped = max(0, len(targets) - cap)
     if dropped:
         print(f"[enrich] 대상 {len(targets)}건 중 {cap}건 처리, {dropped}건 이월", file=sys.stderr)
