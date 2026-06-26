@@ -37,7 +37,7 @@ TOOL = {
             "funding_amount": {"type": "string", "description": "지원규모·금액 발췌"},
             "eligibility": {"type": "string", "description": "신청자격·지원대상 발췌"},
             "required_docs": {"type": "string", "description": "제출서류 발췌"},
-            "key_dates": {"type": "string", "description": "접수기간·주요일정 발췌"},
+            "key_dates": {"type": "string", "description": "접수·신청 기간 한 구절만 원문 그대로 복사. 여러 일정을 합치거나 형식·구분자를 바꾸지 말 것."},
         },
         "required": list(FIELDS),
     },
