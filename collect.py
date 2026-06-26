@@ -72,6 +72,15 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
         elif not r.summary and (p := previous.get(r.key)) and p.summary:
             r.summary = p.summary  # 기존 레코드 요약 유지(upsert가 ""로 덮지 않게)
 
+    # 기존 추출필드(enrich 결과) 유지: enrich는 run() 다음 단계라 current엔 항상 공란.
+    # 안 살리면 upsert가 재수집된 공고의 추출값을 ""로 덮어 유실(summary와 동일 이슈).
+    for r in current:
+        if (p := previous.get(r.key)):
+            for f in ("funding_amount", "eligibility", "required_docs",
+                      "key_dates", "extracted_from", "extraction_status"):
+                if not getattr(r, f):
+                    setattr(r, f, getattr(p, f))
+
     # 메일은 기술 공고만(DB엔 전건 저장).
     new_t = [r for r in new if r.is_tech == "1"]
     imm_t = [(r, d) for r, d in imminent if r.is_tech == "1"]

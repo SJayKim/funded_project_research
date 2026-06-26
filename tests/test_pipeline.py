@@ -356,6 +356,19 @@ class TestSummaryCaching(unittest.TestCase):
         run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], date(2026, 6, 22), send=False)
         self.assertEqual(self.calls[0], [])              # 시딩엔 LLM 호출 0건
 
+    def test_extraction_preserved_on_recollect(self):  # 재수집 upsert가 추출값 안 덮게
+        from collect import run
+        today = date(2026, 6, 22)
+        run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)
+        enriched = rec("kstartup", "1", title="AI 자동화 R&D")
+        enriched.key_dates = "2026-07-01 ~ 2026-07-31"
+        enriched.extraction_status = "ok"
+        self.store.upsert(enriched, "2026-06-22T00:00:00")  # enrich 결과 모사
+        run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)  # 추출필드 공란 재수집
+        loaded = self.store.load()["kstartup:1"]
+        self.assertEqual(loaded.key_dates, "2026-07-01 ~ 2026-07-31")  # 유지
+        self.assertEqual(loaded.extraction_status, "ok")
+
 
 class _FakeResp:
     def __init__(self, payload):
