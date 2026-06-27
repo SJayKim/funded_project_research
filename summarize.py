@@ -1,8 +1,8 @@
 """신규∩기술 공고 LLM 요약(Claude API, stdlib urllib). 키 없으면 규칙 fallback.
 
 adapters/base.py의 urllib+ssl 패턴과 일관 — anthropic SDK 안 씀.
-Opus 4.8 요청 계약: temperature/top_p/top_k/budget_tokens는 전부 제거됨(보내면 400).
-그래서 body엔 model·max_tokens·system·messages만 넣는다.
+요청 body엔 model·max_tokens·system·messages만 넣는다(Opus/Fable 계열은 temperature/
+top_p/top_k/budget_tokens 보내면 400 — 모델 바꿔도 추가 안 함).
 """
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ import anthropic_client
 from normalize import NoticeRecord
 
 # 빈 문자열 secret(미설정 GH Actions)도 기본값으로 떨어지게 or 사용.
-MODEL = os.environ.get("ANTHROPIC_MODEL") or "claude-opus-4-8"
+# 요약은 단순 생성 태스크 → Haiku로 충분(저비용·고속). extract와 모델 분리.
+MODEL = os.environ.get("SUMMARIZE_MODEL") or "claude-haiku-4-5"
 SYSTEM = "당신은 정부 R&D·지원사업 공고를 한국 기업 담당자에게 1~2문장으로 요약하는 비서다. 핵심 지원내용과 대상만, 군더더기 없이."
 
 

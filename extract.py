@@ -1,7 +1,8 @@
 """공고 상세HTML 본문 → 4필드 LLM 추출(tool_use 구조화 출력). 설계 Approach A.
 
-이슈2 검증(2026-06-25 실측): Opus 4.8은 body에 tools+tool_choice 허용,
+이슈2 검증(2026-06-25 실측, Opus 4.8): body에 tools+tool_choice 허용,
 stop_reason=tool_use로 단일 tool_use 블록 반환. 응답 파싱은 b["input"] dict.
+(2026-06-27 추출 모델을 Sonnet 4.6으로 전환 — tool_choice 강제·tool_use 반환 동일.)
 substring 검증은 enrich 단계(별도)에서 — 여기선 LLM 추출 + 상태 판정만.
 """
 from __future__ import annotations
@@ -12,7 +13,8 @@ import re
 import anthropic_client
 from normalize import normalize_text
 
-MODEL = os.environ.get("ANTHROPIC_MODEL") or "claude-opus-4-8"
+# 추출은 verbatim 충실·지시준수가 중요 → Sonnet(Opus와 Haiku 사이). summarize와 모델 분리.
+MODEL = os.environ.get("EXTRACT_MODEL") or "claude-sonnet-4-6"
 FIELDS = ("funding_amount", "eligibility", "required_docs", "key_dates")
 MAX_BODY_CHARS = 20000  # LLM 입력 크기 상한(설계 §3 크기상한). 초과분 절단.
 
