@@ -2,6 +2,11 @@
 
 정부지원사업 및 정부 R&D 공고를 여러 공식 출처에서 수집해 정규화하고, 신규/변경/마감임박 공고를 알림으로 보내며, SQLite DB 기반의 간단한 대시보드를 제공하는 Python 프로젝트입니다.
 
+## 링크
+
+- 공개 대시보드: <https://sjaykim.github.io/funded_project_research/>
+- GitHub 저장소: <https://github.com/SJayKim/funded_project_research>
+
 ## 주요 기능
 
 - K-Startup, 기업마당, 과기정통부, 나라장터, IRIS 공고 수집
