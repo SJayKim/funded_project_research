@@ -1,5 +1,19 @@
 # CLAUDE.md
 
+## Repository Layout
+
+- Runtime package: `funded_project_research/`
+- Source adapters: `funded_project_research/adapters/`
+- Documentation index: `docs/README.md`
+- Tests and fixtures: `tests/`
+- Sample API payloads: `samples/`
+- Helper scripts: `scripts/`
+
+Run project modules from the repository root:
+- Collector: `python -m funded_project_research.collect`
+- Static dashboard build/server: `python -m funded_project_research.serve`
+- Extraction eval: `python -m funded_project_research.eval_extract`
+
 ## Behavioral Guidelines (Karpathy)
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.

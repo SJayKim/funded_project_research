@@ -48,7 +48,7 @@ jobs:
           # 모델 오버라이드(미설정 시 코드 기본값: 요약=Haiku, 추출=Sonnet).
           SUMMARIZE_MODEL: ${{ secrets.SUMMARIZE_MODEL }}
           EXTRACT_MODEL: ${{ secrets.EXTRACT_MODEL }}
-        run: python collect.py ${{ inputs.no_notify && '--no-notify' || '' }}
+        run: python -m funded_project_research.collect ${{ inputs.no_notify && '--no-notify' || '' }}
 
       # 갱신된 DB를 data 브랜치에 커밋(main 이력 오염 방지).
       - name: Commit DB to data branch
@@ -70,7 +70,7 @@ jobs:
       - name: Build static dashboard
         run: |
           mkdir -p site
-          python serve.py --build site/index.html
+          python -m funded_project_research.serve --build site/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

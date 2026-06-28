@@ -13,18 +13,13 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import anthropic_client
-import classify
-import diff
-import notify_email
-import serve
-import summarize
-from adapters.base import RawNotice
-from adapters.iris import parse_detail, parse_rows
-from adapters.msit import _item_to_dict
-from dedupe import dedupe, dedupe_within_source, jaccard
-from normalize import NoticeRecord, deadline_date, normalize, normalize_text, parse_deadline
-from store import Store
+from funded_project_research import anthropic_client, classify, diff, notify_email, serve, summarize
+from funded_project_research.adapters.base import RawNotice
+from funded_project_research.adapters.iris import parse_detail, parse_rows
+from funded_project_research.adapters.msit import _item_to_dict
+from funded_project_research.dedupe import dedupe, dedupe_within_source, jaccard
+from funded_project_research.normalize import NoticeRecord, deadline_date, normalize, normalize_text, parse_deadline
+from funded_project_research.store import Store
 
 SAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "samples")
 
@@ -229,7 +224,7 @@ class TestRunPipeline(unittest.TestCase):
     def test_new_then_recollect_zero(self):  # #1,#2,#3 (메일 tech-only → 제목을 기술로)
         today = date(2026, 6, 22)
         r = rec("kstartup", "178198", title="AI 딥테크 공고", url="u", agency="중기부", deadline="2026-07-08")
-        from collect import run
+        from funded_project_research.collect import run
         out1 = run(self.store, [r], today)
         self.assertEqual(out1["new"], 1)
         self.assertEqual(len(self.sent), 1)
@@ -238,7 +233,7 @@ class TestRunPipeline(unittest.TestCase):
         self.assertEqual(out2["new"], 0)
 
     def test_imminent_once(self):  # #4 중복 발송 없음
-        from collect import run
+        from funded_project_research.collect import run
         today = date(2026, 6, 22)
         r = rec("kstartup", "1", title="AI 솔루션 공고", url="u", agency="a", deadline="2026-06-29")  # D-7
         out1 = run(self.store, [r], today)
@@ -337,14 +332,14 @@ class TestSummaryCaching(unittest.TestCase):
         self.store.close()
 
     def test_only_new_tech_summarized(self):
-        from collect import run
+        from funded_project_research.collect import run
         tech = rec("kstartup", "1", title="AI 자동화 R&D")
         nontech = rec("bizinfo", "2", title="전통시장 환경개선 지원")
         run(self.store, [tech, nontech], date(2026, 6, 22))
         self.assertEqual(self.calls[0], ["kstartup:1"])  # 기술 신규만 요약
 
     def test_no_resummarize_on_recollect(self):
-        from collect import run
+        from funded_project_research.collect import run
         today = date(2026, 6, 22)
         run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)
         self.assertEqual(self.calls[0], ["kstartup:1"])
@@ -352,12 +347,12 @@ class TestSummaryCaching(unittest.TestCase):
         self.assertEqual(self.calls[1], [])              # 캐시 유지 → 재요약 0건
 
     def test_no_notify_skips_summary(self):
-        from collect import run
+        from funded_project_research.collect import run
         run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], date(2026, 6, 22), send=False)
         self.assertEqual(self.calls[0], [])              # 시딩엔 LLM 호출 0건
 
     def test_extraction_preserved_on_recollect(self):  # 재수집 upsert가 추출값 안 덮게
-        from collect import run
+        from funded_project_research.collect import run
         today = date(2026, 6, 22)
         run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)
         enriched = rec("kstartup", "1", title="AI 자동화 R&D")
@@ -428,14 +423,14 @@ class TestExtract(unittest.TestCase):
     """extract.extract: tool_use 응답 → 4필드+상태, body 계약, 실패/값없음 분기."""
 
     def tearDown(self):
-        import extract
+        from funded_project_research import extract
         # 혹시 스텁이 남았으면 복구
-        import anthropic_client as ac
+        from funded_project_research import anthropic_client as ac
         if hasattr(self, "_orig_post"):
             ac.post_message = self._orig_post
 
     def _stub(self, tool_input=None, content=None):
-        import anthropic_client as ac
+        from funded_project_research import anthropic_client as ac
         self._orig_post = ac.post_message
         self.captured = {}
 
@@ -448,7 +443,7 @@ class TestExtract(unittest.TestCase):
         ac.post_message = fake
 
     def test_ok_extraction_and_body_contract(self):
-        import extract
+        from funded_project_research import extract
         self._stub({"funding_amount": "최대 3억원", "eligibility": "중소기업",
                     "required_docs": "사업계획서", "key_dates": "2026.7.1~7.31"})
         vals, status = extract.extract("○ 지원규모: 최대 3억원 ...", "test-key")
@@ -461,21 +456,21 @@ class TestExtract(unittest.TestCase):
             self.assertNotIn(forbidden, body)     # Opus 4.8 계약
 
     def test_no_info_when_all_empty(self):
-        import extract
+        from funded_project_research import extract
         self._stub({"funding_amount": "", "eligibility": "", "required_docs": "", "key_dates": ""})
         vals, status = extract.extract("본문에 4필드 없음", "test-key")
         self.assertEqual(status, "no_info")
         self.assertEqual(set(vals), set(extract.FIELDS))   # 키는 4개 다 존재(전부 "")
 
     def test_failed_on_no_tool_use_block(self):
-        import extract
+        from funded_project_research import extract
         self._stub(content=[{"type": "text", "text": "거부"}])
         vals, status = extract.extract("x", "test-key")
         self.assertEqual((vals, status), ({}, "failed"))
 
     def test_failed_on_exception(self):
-        import extract
-        import anthropic_client as ac
+        from funded_project_research import anthropic_client as ac
+        from funded_project_research import extract
         self._orig_post = ac.post_message
 
         def boom(*a, **k):
@@ -485,7 +480,7 @@ class TestExtract(unittest.TestCase):
         self.assertEqual(extract.extract("x", "test-key"), ({}, "failed"))
 
     def test_verify_drops_non_substring(self):  # §5 환각 차단
-        import extract
+        from funded_project_research import extract
         body = "지원규모 3억원, 신청자격 중소기업"
         vals = {"funding_amount": "3억원", "eligibility": "대기업",  # 대기업=원문에 없음→버림
                 "required_docs": "", "key_dates": "환각일정"}
@@ -497,7 +492,7 @@ class TestExtract(unittest.TestCase):
 
 class TestHtmlToText(unittest.TestCase):
     def test_strips_tags_scripts_and_decodes(self):
-        import extract
+        from funded_project_research import extract
         html_in = ("<html><head><style>.x{color:red}</style>"
                    "<script>var a='지원금 999억';</script></head>"
                    "<body><p>지원규모: 3억원 &amp; 자격</p></body></html>")
@@ -508,7 +503,7 @@ class TestHtmlToText(unittest.TestCase):
         self.assertNotIn("<", out)            # 태그 제거
 
     def test_size_cap(self):
-        import extract
+        from funded_project_research import extract
         out = extract.html_to_text("가" * (extract.MAX_BODY_CHARS + 500))
         self.assertEqual(len(out), extract.MAX_BODY_CHARS)
 
@@ -522,7 +517,7 @@ class TestEnrich(unittest.TestCase):
     """collect.enrich: 게이트·상한·필드세팅·코퍼스·fetch실패 재시도."""
 
     def setUp(self):
-        import collect, extract
+        from funded_project_research import collect, extract
         self.store = Store(":memory:")
         self._tmp = tempfile.mkdtemp()
         self._orig_corpus = collect.CORPUS_DIR
@@ -538,7 +533,7 @@ class TestEnrich(unittest.TestCase):
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
 
     def tearDown(self):
-        import collect, extract
+        from funded_project_research import collect, extract
         collect.CORPUS_DIR = self._orig_corpus
         collect.http_get = self._orig_get
         extract.extract = self._orig_extract
@@ -553,7 +548,7 @@ class TestEnrich(unittest.TestCase):
         self.store.commit()
 
     def test_gate_only_eligible(self):
-        import collect
+        from funded_project_research import collect
         self._seed([
             _erec("kstartup", "1"),                    # 대상
             _erec("kstartup", "2", status="ok"),       # 이미 추출
@@ -572,13 +567,13 @@ class TestEnrich(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self._tmp, "kstartup", "1.txt")))
 
     def test_cap_carryover(self):
-        import collect
+        from funded_project_research import collect
         self._seed([_erec("kstartup", str(i)) for i in range(3)])
         out = collect.enrich(self.store, cap=2)
         self.assertEqual((out["enriched"], out["dropped"]), (2, 1))
 
     def test_fetch_failure_left_for_retry(self):
-        import collect
+        from funded_project_research import collect
         collect.http_get = lambda url, timeout=20: (_ for _ in ()).throw(TimeoutError("slow"))
         self._seed([_erec("kstartup", "1")])
         out = collect.enrich(self.store)
@@ -586,7 +581,7 @@ class TestEnrich(unittest.TestCase):
         self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")  # 재시도 대상 유지
 
     def test_no_key_skips(self):
-        import collect
+        from funded_project_research import collect
         os.environ.pop("ANTHROPIC_API_KEY", None)
         self._seed([_erec("kstartup", "1")])
         out = collect.enrich(self.store)
@@ -594,7 +589,7 @@ class TestEnrich(unittest.TestCase):
         self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")
 
     def test_hallucinated_values_dropped_to_no_info(self):
-        import collect, extract
+        from funded_project_research import collect, extract
         # 본문엔 없는 값만 추출 → substring 전부 탈락 → no_info, 값 공란
         extract.extract = lambda body, key: (
             {"funding_amount": "100억(환각)", "eligibility": "", "required_docs": "",
@@ -615,21 +610,21 @@ class TestEvalScoring(unittest.TestCase):
                                      "required_docs": "", "key_dates": ""}}
 
     def test_no_info_pass_when_empty(self):
-        import eval_extract
+        from funded_project_research import eval_extract
         r = eval_extract.score(self._fx("no_info"),
                                {"funding_amount": "", "eligibility": "",
                                 "required_docs": "", "key_dates": ""}, "no_info")
         self.assertTrue(r["passed"])
 
     def test_no_info_fail_on_hallucination(self):
-        import eval_extract
+        from funded_project_research import eval_extract
         r = eval_extract.score(self._fx("no_info"),
                                {"funding_amount": "100억", "eligibility": "",
                                 "required_docs": "", "key_dates": ""}, "no_info")
         self.assertFalse(r["passed"])  # 음성케이스인데 값 추출 → fail
 
     def test_ok_pass_on_golden_overlap(self):
-        import eval_extract
+        from funded_project_research import eval_extract
         fx = self._fx("ok", {"funding_amount": "최대 3억원", "eligibility": "",
                              "required_docs": "", "key_dates": ""})
         r = eval_extract.score(fx, {"funding_amount": "지원규모 최대 3억원", "eligibility": "",
@@ -637,7 +632,7 @@ class TestEvalScoring(unittest.TestCase):
         self.assertTrue(r["passed"])   # golden ⊂ 추출값 → 겹침 인정
 
     def test_ok_fail_on_missing_field(self):
-        import eval_extract
+        from funded_project_research import eval_extract
         fx = self._fx("ok", {"funding_amount": "3억원", "eligibility": "",
                              "required_docs": "", "key_dates": ""})
         r = eval_extract.score(fx, {"funding_amount": "", "eligibility": "",
@@ -645,7 +640,7 @@ class TestEvalScoring(unittest.TestCase):
         self.assertFalse(r["passed"])  # golden 있는데 미추출
 
     def test_status_mismatch_fails(self):
-        import eval_extract
+        from funded_project_research import eval_extract
         r = eval_extract.score(self._fx("no_info"), {}, "ok")
         self.assertFalse(r["passed"])
 
@@ -655,7 +650,7 @@ class TestExtractEvalLive(unittest.TestCase):
     """fixture 전체에 실모델 추출 — 키 있을 때만(일반 런 skip). 음성케이스 환각 0 검증."""
 
     def test_all_fixtures_pass(self):
-        import eval_extract
+        from funded_project_research import eval_extract
         fixtures = eval_extract.load_fixtures()
         self.assertTrue(fixtures, "fixture 없음")
         results = eval_extract.run(fixtures, os.environ["ANTHROPIC_API_KEY"])
@@ -678,7 +673,7 @@ class TestTechFiltering(unittest.TestCase):
         self.store.close()
 
     def test_email_tech_only_db_all(self):
-        from collect import run
+        from funded_project_research.collect import run
         tech = rec("kstartup", "1", title="AI 자동화 R&D", agency="중기부", deadline="2026-07-08")
         nontech = rec("bizinfo", "2", title="전통시장 환경개선 지원", agency="소진공", deadline="2026-07-08")
         out = run(self.store, [tech, nontech], date(2026, 6, 22))
@@ -736,7 +731,7 @@ class TestServe(unittest.TestCase):
 
 class TestCollectIsolation(unittest.TestCase):
     def test_one_adapter_failure_isolated(self):  # 한 소스 실패가 전체 수집을 죽이지 않음
-        import collect
+        from funded_project_research import collect
 
         class Boom:
             def collect(self):

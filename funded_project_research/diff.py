@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from normalize import WATCH_FIELDS, NoticeRecord, deadline_date
+from .normalize import WATCH_FIELDS, NoticeRecord, deadline_date
 
 IMMINENT_THRESHOLDS = (7, 3, 1)
 

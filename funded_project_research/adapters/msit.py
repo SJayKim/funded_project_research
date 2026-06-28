@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import xml.etree.ElementTree as ET
 
-from adapters.base import Adapter, RawNotice, build_url, http_get
+from .base import Adapter, RawNotice, build_url, http_get
 
 BASE = "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList"
 

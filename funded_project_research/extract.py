@@ -10,8 +10,8 @@ from __future__ import annotations
 import os
 import re
 
-import anthropic_client
-from normalize import normalize_text
+from . import anthropic_client
+from .normalize import normalize_text
 
 # 추출은 verbatim 충실·지시준수가 중요 → Sonnet(Opus와 Haiku 사이). summarize와 모델 분리.
 MODEL = os.environ.get("EXTRACT_MODEL") or "claude-sonnet-4-6"

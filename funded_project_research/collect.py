@@ -10,20 +10,16 @@ import os
 import sys
 from datetime import date, datetime
 
-import classify
-import diff
-import extract
-import notify_email
-import summarize
-from adapters.base import RawNotice, http_get
-from adapters.bizinfo import BizinfoAdapter
-from adapters.iris import IrisAdapter
-from adapters.kstartup import KStartupAdapter
-from adapters.msit import MsitAdapter
-from adapters.nara import NaraAdapter
-from dedupe import dedupe
-from normalize import NoticeRecord, deadline_date, normalize
-from store import Store
+from . import classify, diff, extract, notify_email, summarize
+from .adapters.base import RawNotice, http_get
+from .adapters.bizinfo import BizinfoAdapter
+from .adapters.iris import IrisAdapter
+from .adapters.kstartup import KStartupAdapter
+from .adapters.msit import MsitAdapter
+from .adapters.nara import NaraAdapter
+from .dedupe import dedupe
+from .normalize import NoticeRecord, deadline_date, normalize
+from .store import Store
 
 ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
 

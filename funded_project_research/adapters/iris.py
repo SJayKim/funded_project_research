@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 
-from adapters.base import Adapter, RawNotice, http_post
+from .base import Adapter, RawNotice, http_post
 
 BASE = "https://www.iris.go.kr/contents"
 LIST_URL = f"{BASE}/retrieveBsnsAncmListView.do"

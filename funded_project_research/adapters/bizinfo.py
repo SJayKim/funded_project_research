@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import time
 
-from adapters.base import Adapter, RawNotice, build_url, http_get_json
+from .base import Adapter, RawNotice, build_url, http_get_json
 
 BASE = "https://api.odcloud.kr/api/3034791/v1/uddi:fa09d13d-bce8-474e-b214-8008e79ec08f"
 

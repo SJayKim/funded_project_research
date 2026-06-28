@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict, fields
 
-from normalize import NoticeRecord
+from .normalize import NoticeRecord
 
 DEFAULT_DB = "gov_notices.db"
 

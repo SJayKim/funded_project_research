@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from adapters.base import RawNotice
+from .adapters.base import RawNotice
 
 # diff 감시 필드(접수마감·신청상태·첨부 링크)
 WATCH_FIELDS = ("deadline", "status", "attachments")

@@ -14,9 +14,9 @@ import glob
 import json
 import os
 
-import extract
+from . import extract
 
-FIXTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+FIXTURE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "tests", "fixtures", "extract")
 
 

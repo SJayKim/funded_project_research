@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from normalize import NoticeRecord
+from .normalize import NoticeRecord
 
 JACCARD_THRESHOLD = 0.75
 

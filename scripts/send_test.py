@@ -9,8 +9,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import notify_email
-from normalize import NoticeRecord
+from funded_project_research import notify_email
+from funded_project_research.normalize import NoticeRecord
 
 sample = NoticeRecord(
     source="kstartup",

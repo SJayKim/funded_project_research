@@ -9,8 +9,8 @@ import os
 import smtplib
 from email.message import EmailMessage
 
-from diff import Modified
-from normalize import NoticeRecord
+from .diff import Modified
+from .normalize import NoticeRecord
 
 
 def _line(rec: NoticeRecord) -> str:

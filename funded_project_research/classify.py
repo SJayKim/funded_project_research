@@ -5,7 +5,7 @@ dict 선언 순서대로 첫 매칭 승(결정적). 한 개도 매칭 안 되면
 """
 from __future__ import annotations
 
-from normalize import NoticeRecord
+from .normalize import NoticeRecord
 
 # §6 일반 기술 분야 10개 + 세부 키워드(전부 소문자).
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {

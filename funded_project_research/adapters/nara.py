@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 
-from adapters.base import Adapter, RawNotice, build_url, http_get_json
+from .base import Adapter, RawNotice, build_url, http_get_json
 
 BASE = "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc"
 

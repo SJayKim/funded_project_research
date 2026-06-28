@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import os
 
-import anthropic_client
-from normalize import NoticeRecord
+from . import anthropic_client
+from .normalize import NoticeRecord
 
 # 빈 문자열 secret(미설정 GH Actions)도 기본값으로 떨어지게 or 사용.
 # 요약은 단순 생성 태스크 → Haiku로 충분(저비용·고속). extract와 모델 분리.

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 
-from adapters.base import Adapter, RawNotice, build_url, http_get_json
+from .base import Adapter, RawNotice, build_url, http_get_json
 
 BASE = "https://nidapi.k-startup.go.kr/api/kisedKstartupService/v1/getAnnouncementInformation"
 
