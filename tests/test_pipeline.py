@@ -111,11 +111,13 @@ class TestNormalizeSamples(unittest.TestCase):
         self.assertTrue(r.title and r.url and r.agency)
         self.assertEqual(r.deadline, "2026-07-08")
 
-    def test_bizinfo_sample(self):
-        r = normalize(RawNotice("bizinfo", _load_json("bizinfo_mirror.json")["data"][0]))
+    def test_bizinfo_sample(self):  # 라이브 jsonArray shape 매핑
+        r = normalize(RawNotice("bizinfo", _load_json("bizinfo_live.json")["jsonArray"][0]))
         self.assertEqual(r.source_id, "PBLN_000000000106856")
-        self.assertEqual(r.deadline, "2025-04-16")
-        self.assertTrue(r.url and r.agency)
+        self.assertEqual(r.key, "bizinfo:PBLN_000000000106856")
+        self.assertEqual(r.deadline, "2026-04-30")  # reqstBeginEndDe 종료일
+        self.assertEqual(r.specialized_agency, "대구디지털혁신진흥원")
+        self.assertTrue(r.title and r.url and r.agency)
 
     def test_nara_sample(self):
         r = normalize(RawNotice("nara", _load_json("nara_servc.json")["response"]["body"]["items"][0]))
@@ -140,6 +142,48 @@ class TestNormalizeSamples(unittest.TestCase):
         self.assertEqual(r.deadline, "")
         self.assertTrue(r.attachments)
         self.assertTrue(r.url and r.agency)
+
+
+class TestBizinfoLive(unittest.TestCase):  # (c) 라이브 OpenAPI 전환: 파싱·매핑·key 안정성
+    def test_range_end_boundaries(self):
+        from funded_project_research.normalize import _range_end
+        self.assertEqual(_range_end("2026-04-10 ~ 2026-04-30"), "2026-04-30")  # 하이픈형
+        self.assertEqual(_range_end("20260410 ~ 20260430"), "20260430")        # 컴팩트형
+        self.assertEqual(_range_end(""), "")                                    # 빈값
+        self.assertEqual(_range_end(None), "")                                  # None
+        self.assertEqual(_range_end("2026-04-30"), "")                          # 단일날짜(범위 아님)
+
+    def test_range_end_feeds_parse_deadline(self):  # _range_end → parse_deadline 합성
+        from funded_project_research.normalize import _range_end
+        self.assertEqual(parse_deadline(_range_end("2026-04-10 ~ 2026-04-30")), "2026-04-30")
+        self.assertEqual(parse_deadline(_range_end("20260410 ~ 20260430")), "2026-04-30")
+
+    def test_key_stable_vs_static(self):  # 라이브 pblancId == 구 정적 URL 파생 key(고아화 방지)
+        from funded_project_research.normalize import _pblanc_id
+        old_url = _load_json("bizinfo_mirror.json")["data"][0]["상세URL"]
+        live = normalize(RawNotice("bizinfo", _load_json("bizinfo_live.json")["jsonArray"][0]))
+        self.assertEqual(live.source_id, _pblanc_id(old_url))
+        self.assertEqual(live.key, "bizinfo:PBLN_000000000106856")
+
+    def test_adapter_parses_jsonArray(self):  # 응답 루트 jsonArray 추출 + 빈 페이지 break
+        from funded_project_research.adapters import bizinfo as biz
+        payload = _load_json("bizinfo_live.json")
+        calls = []
+        def fake_get_json(url, timeout=30):
+            calls.append(url)
+            return payload if len(calls) == 1 else {"jsonArray": []}
+        orig_get, orig_delay = biz.http_get_json, biz.PAGE_DELAY_SEC
+        biz.http_get_json, biz.PAGE_DELAY_SEC = fake_get_json, 0
+        try:
+            raws = biz.BizinfoAdapter(crtfc_key="X", max_pages=3).collect()
+        finally:
+            biz.http_get_json, biz.PAGE_DELAY_SEC = orig_get, orig_delay
+        self.assertEqual(len(raws), 1)
+        self.assertEqual(raws[0].source, "bizinfo")
+        self.assertEqual(raws[0].raw["pblancId"], "PBLN_000000000106856")
+        self.assertIn("crtfcKey=X", calls[0])
+        self.assertIn("dataType=json", calls[0])
+        self.assertEqual(len(calls), 2)  # 1=데이터, 2=빈→break
 
 
 class TestNormalizeText(unittest.TestCase):
@@ -727,6 +771,13 @@ class TestServe(unittest.TestCase):
             self.assertIn("발췌", html)                  # '발췌' 라벨 렌더 블록 존재
         finally:
             os.unlink(path)
+
+    def test_hide_closed_controls_present(self):  # (b) 마감 숨김 체크박스 + 진행중 부제 + 필터 술어
+        page = serve.PAGE
+        self.assertIn('id="hideClosed"', page)                       # 마감 숨김 체크박스
+        self.assertIn('id="openTotal"', page)                        # 진행중 카운트 슬롯
+        self.assertIn('진행중', page)                                # 헤드라인 진행중 부제
+        self.assertIn('hideClosed && ddayInfo(d).days', page)        # 필터 술어 배선
 
 
 class TestCollectIsolation(unittest.TestCase):

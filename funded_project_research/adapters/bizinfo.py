@@ -1,26 +1,27 @@
-"""기업마당 미러 (data.go.kr odcloud 3034791). 자동승인, JSON.
+"""기업마당 라이브 OpenAPI (bizinfoApi.do). crtfcKey 인증, JSON.
 
-신청종료일자(한글 키) YYYY-MM-DD. 연간 스냅샷(2025-03)이라 신선도 한계 — 1주차 그대로 포함.
+신청기간 reqstBeginEndDe는 "시작 ~ 종료" 범위 문자열 — 종료일을 마감으로 정규화.
+공고 ID pblancId(PBLN_*)는 구 정적 스냅샷 URL의 pblancId와 동일 → DB key 보존.
 """
 from __future__ import annotations
 
 import os
 import time
+from urllib.parse import urlencode
 
-from .base import Adapter, RawNotice, build_url, http_get_json
+from .base import Adapter, RawNotice, http_get_json
 
-BASE = "https://api.odcloud.kr/api/3034791/v1/uddi:fa09d13d-bce8-474e-b214-8008e79ec08f"
+BASE = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
 
-# odcloud은 연속 호출을 rate-limit으로 차단한다(실측 2026-06-22: 간격 없이 5페이지째
-# code:-999 UNKNOWN 400, 0.6s 간격이면 통과). 페이지 사이 지연으로 적정 호출간격 준수.
+# crtfcKey rate limit 미공개 — 페이지 간 courtesy delay 유지.
 PAGE_DELAY_SEC = 0.8
 
 
 class BizinfoAdapter(Adapter):
     source = "bizinfo"
 
-    def __init__(self, service_key: str | None = None, per_page: int = 100, max_pages: int = 50):
-        self.service_key = service_key or os.environ["SERVICE_KEY"]
+    def __init__(self, crtfc_key: str | None = None, per_page: int = 100, max_pages: int = 50):
+        self.crtfc_key = crtfc_key or os.environ["BIZINFO_CRTFC_KEY"]
         self.per_page = per_page
         self.max_pages = max_pages
 
@@ -29,10 +30,9 @@ class BizinfoAdapter(Adapter):
         for page in range(1, self.max_pages + 1):
             if page > 1:
                 time.sleep(PAGE_DELAY_SEC)
-            url = build_url(BASE, self.service_key,
-                            {"page": page, "perPage": self.per_page, "returnType": "JSON"})
-            data = http_get_json(url).get("data") or []
-            if not data:
+            url = f"{BASE}?{urlencode({'crtfcKey': self.crtfc_key, 'dataType': 'json', 'pageUnit': self.per_page, 'pageIndex': page})}"
+            items = http_get_json(url).get("jsonArray") or []
+            if not items:
                 break
-            out += [RawNotice(self.source, r) for r in data]
+            out += [RawNotice(self.source, r) for r in items]
         return out

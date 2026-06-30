@@ -46,7 +46,7 @@ class RawNotice:
 _TLS_RELAXED_HOSTS = frozenset({
     "nidapi.k-startup.go.kr",
     "apis.data.go.kr",
-    "api.odcloud.kr",
+    "api.odcloud.kr",     # now-unused: bizinfo 라이브 전환 후 odcloud 미사용(삭제는 별도 확인 후)
     "www.iris.go.kr",
     "www.k-startup.go.kr",   # 상세페이지 fetch(enrich) — AKI 누락, 실측 2026-06-26
     "www.bizinfo.go.kr",     # 상세페이지 fetch(enrich) — AKI 누락, 실측 2026-06-26

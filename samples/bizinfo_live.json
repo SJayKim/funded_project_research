@@ -1,0 +1,14 @@
+{
+  "_comment": "스펙 유래 최소 픽스처(bizinfoApi.do dataType=json). crtfcKey 확보 후 실캡처로 교체 예정.",
+  "jsonArray": [
+    {
+      "pblancId": "PBLN_000000000106856",
+      "pblancNm": "[대구] 출판ㆍ인쇄기업 사업화 패키지 지원사업 모집 공고(대구출판산업지원센터)",
+      "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000106856",
+      "jrsdInsttNm": "대구광역시",
+      "excInsttNm": "대구디지털혁신진흥원",
+      "reqstBeginEndDe": "2026-04-10 ~ 2026-04-30",
+      "creatPnttm": "2026-03-27"
+    }
+  ]
+}

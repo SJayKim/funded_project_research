@@ -98,16 +98,22 @@ def _pblanc_id(url: str) -> str:
     return m.group(1) if m else (url or "")
 
 
+def _range_end(s: str | None) -> str:
+    """신청기간 "시작 ~ 종료"에서 종료일만. 범위가 아니면(~ 없음) "" (마감 불명)."""
+    parts = (s or "").split("~")
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
 def _map_bizinfo(r: dict) -> NoticeRecord:
-    url = normalize_text(r.get("상세URL"))
+    url = normalize_text(r.get("pblancUrl"))
     return NoticeRecord(
         source="bizinfo",
-        source_id=_pblanc_id(url),
-        title=normalize_text(r.get("사업명")),
+        source_id=normalize_text(r.get("pblancId")) or _pblanc_id(url),
+        title=normalize_text(r.get("pblancNm")),
         url=url,
-        agency=normalize_text(r.get("소관기관")),
-        specialized_agency=normalize_text(r.get("수행기관")),
-        deadline=parse_deadline(r.get("신청종료일자")),
+        agency=normalize_text(r.get("jrsdInsttNm")),
+        specialized_agency=normalize_text(r.get("excInsttNm")),
+        deadline=parse_deadline(_range_end(r.get("reqstBeginEndDe"))),
     )
 
 
