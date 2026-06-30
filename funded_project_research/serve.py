@@ -31,6 +31,8 @@ PAGE = """<!DOCTYPE html>
   .controls { margin: 1rem 0; display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
   input, select { padding: .4rem .5rem; font-size: .95rem; }
   #count { color: #666; font-size: .9rem; }
+  .controls label { font-size: .9rem; color: #444; display: inline-flex; align-items: center; gap: .3rem; }
+  .controls input[type=checkbox] { padding: 0; }
   table { border-collapse: collapse; width: 100%; font-size: .9rem; }
   th, td { border: 1px solid #ddd; padding: .5rem; text-align: left; vertical-align: top; }
   th { background: #f5f5f5; }
@@ -87,7 +89,7 @@ PAGE = """<!DOCTYPE html>
 <body>
 <h1>정부과제 대시보드</h1>
 <div class="banner" role="note">
-  <strong id="total"></strong>건을 <strong>5개 공식 기관</strong>에서 매일 수집 · 마지막 갱신 <strong id="updated"></strong>
+  <strong id="total"></strong>건을 <strong>5개 공식 기관</strong>에서 매일 수집 · 진행중 <strong id="openTotal"></strong>건 · 마지막 갱신 <strong id="updated"></strong>
   <div class="dist" id="dist"></div>
   <div class="caveat">기관 원문이 갱신·마감 변경될 수 있으니 신청 전 원문을 확인하세요.</div>
 </div>
@@ -103,6 +105,7 @@ PAGE = """<!DOCTYPE html>
     <option value="table" selected>테이블</option>
     <option value="cards">카드</option>
   </select>
+  <label><input id="hideClosed" type="checkbox" checked> 마감 지난 공고 숨기기</label>
   <span id="count" aria-live="polite"></span>
 </div>
 <table>
@@ -140,6 +143,9 @@ function hl(parent, text, q) {
 }
 // 신뢰 배너 채우기: 정확 건수 + 출처별 분포 + 갱신일
 document.getElementById('total').textContent = DATA.length.toLocaleString();
+// 진행중: 미래 마감(D-day>=0) 보유 건수. 마감일 없는 건(days===null)은 신청가능 불명 → 제외.
+document.getElementById('openTotal').textContent =
+  DATA.filter(d => { const x = ddayInfo(d).days; return x !== null && x >= 0; }).length.toLocaleString();
 document.getElementById('updated').textContent = refDate;
 const distCount = {};
 for (const d of DATA) distCount[d.source] = (distCount[d.source] || 0) + 1;
@@ -169,11 +175,14 @@ function render() {
   const q = document.getElementById('q').value.trim().toLowerCase();
   const cat = sel.value;
   const view = viewSel.value;
+  const hideClosed = document.getElementById('hideClosed').checked;
   const rows = DATA.filter(d => {
     if (cat === '__TECH__') { if (d.is_tech !== '1') return false; }
     else if (cat !== '__ALL__') { if (d.category !== cat) return false; }
     if (view === 'soon') { const dd = ddayInfo(d).days; if (dd === null || dd < 0 || dd > 7) return false; }
     else if (view === 'new') { if (!isNew(d)) return false; }
+    // 마감 숨김(기본 ON): 마감일 있고 지난 공고만 제외. 마감일 없는 건(days===null)은 통과.
+    if (hideClosed && ddayInfo(d).days !== null && ddayInfo(d).days < 0) return false;
     if (q) {
       const hay = (d.title + ' ' + d.summary + ' ' + d.agency + ' ' + d.target + ' ' + d.specialized_agency).toLowerCase();
       if (!hay.includes(q)) return false;
@@ -306,6 +315,7 @@ function render() {
 document.getElementById('q').addEventListener('input', render);
 sel.addEventListener('change', render);
 viewSel.addEventListener('change', render);
+document.getElementById('hideClosed').addEventListener('change', render);
 // 레이아웃 토글: 재렌더 없이 table에 cards 클래스만 토글(모바일은 CSS가 항상 카드)
 const layoutSel = document.getElementById('layout');
 const tableEl = document.querySelector('table');
