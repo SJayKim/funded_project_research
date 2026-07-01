@@ -1,14 +1,28 @@
 {
-  "_comment": "스펙 유래 최소 픽스처(bizinfoApi.do dataType=json). crtfcKey 확보 후 실캡처로 교체 예정.",
+  "_comment": "실캡처(bizinfoApi.do dataType=json, 2026-07-01). jsonArray[0] 원본 레코드 그대로.",
   "jsonArray": [
     {
-      "pblancId": "PBLN_000000000106856",
-      "pblancNm": "[대구] 출판ㆍ인쇄기업 사업화 패키지 지원사업 모집 공고(대구출판산업지원센터)",
-      "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000106856",
-      "jrsdInsttNm": "대구광역시",
-      "excInsttNm": "대구디지털혁신진흥원",
-      "reqstBeginEndDe": "2026-04-10 ~ 2026-04-30",
-      "creatPnttm": "2026-03-27"
+      "trgetNm": "중소기업",
+      "updtPnttm": "2026-06-30 15:45:54",
+      "hashtags": "수출,내수,경영,충북,글로벌 출시,충북글로벌게임센터,게임 콘텐츠,2026,콘솔,PC,청주시문화산업진흥재단,모바일,디지털,게임기업,충청북도,콘텐츠,마케팅",
+      "inqireCo": 1181,
+      "creatPnttm": "2026-06-30 14:49:31",
+      "pblancNm": "[충북] 2026년 성과 창출형 상용화 지원사업 참여기업 모집 공고",
+      "pblancId": "PBLN_000000000123787",
+      "printFlpthNm": "https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_000000000762213&fileSn=0",
+      "refrncNm": "청주시문화산업진흥재단 콘텐츠산업팀 043-219-1274",
+      "fileNm": "붙임1.사업_신청서(2026_상용화).hwp@붙임2.사업_계획서(2026_상용화).hwp@붙임3.발표자료_양식(2026_상용화).pptx",
+      "pblancUrl": "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000123787",
+      "jrsdInsttNm": "충청북도",
+      "excInsttNm": "청주시문화산업진흥재단",
+      "totCnt": 1407,
+      "reqstMthPapersCn": "방문 접수\r\n- 접수처 : 청주시문화산업진흥재단 콘텐츠산업팀 (충북글로벌게임센터 담당자)\r\n※ 서류 사본은 이메일로 별도 제출(kim1884@cjculture.org)",
+      "pldirSportRealmLclasCodeNm": "경영",
+      "reqstBeginEndDe": "2026-07-13 ~ 2026-07-14",
+      "flpthNm": "https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_000000000762214&fileSn=0@https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_000000000762214&fileSn=1@https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_000000000762214&fileSn=2",
+      "bsnsSumryCn": "<p>충북글로벌게임센터는 지역 게임기업의 콘텐츠 경쟁력 강화와 상용화 지원을 위해「2026 성과 창출형 상용화 지원사업」을 다음과 같이 공고하오니, 충북 게임산업의 성장을 함께 이끌어갈 유망 게임기업들의 적극적인 관심과 많은 참여 바랍니다.</p><p><br></p><p style=\"line-height: 1.8;\">☞ 공고일 기준 충북 소재 게임기업</p><p style=\"line-height: 1.8;\">- 지원분야 : PC, 모바일, 콘솔, 등 디지털 게임 콘텐츠 상용화 지원</p><p style=\"line-height: 1.8;\">※ 자세한 지원대상 공고문 참조</p><p><br></p><p style=\"line-height: 1.8;\">☞ 기업당 약 1,500만 크레딧을 활용한 맞춤형 간접지원</p><p style=\"line-height: 1.8;\">- 출시 전략 및 분석 지원, 글로벌 출시 대응 지원, 마케팅 및 상용화 지원</p><p style=\"line-height: 1.8;\">※ 자세한 지원내용 공고문 참조</p>",
+      "pldirSportRealmMlsfcCodeNm": "디자인/상품화/사업화",
+      "printFileNm": "2026 충북글로벌게임센터 [성과 창출형 상용화 지원사업] 참여기업 모집 공고.pdf"
     }
   ]
 }
