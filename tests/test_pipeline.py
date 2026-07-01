@@ -802,6 +802,28 @@ class TestCollectIsolation(unittest.TestCase):
             collect.ADAPTERS = orig
         self.assertEqual([r.source for r in raws], ["kstartup"])
 
+    def test_geoblock_urlerror_is_info_not_warn(self):  # CI 지오차단(URLError)은 격리+info, warn 아님
+        import io
+        from contextlib import redirect_stderr
+        from urllib.error import URLError
+        from funded_project_research import collect
+
+        class Blocked:
+            def collect(self):
+                raise URLError("timed out")
+
+        orig = collect.ADAPTERS
+        collect.ADAPTERS = [Blocked]
+        buf = io.StringIO()
+        try:
+            with redirect_stderr(buf):
+                raws = collect.collect_all()
+        finally:
+            collect.ADAPTERS = orig
+        self.assertEqual(raws, [])
+        self.assertIn("[info]", buf.getvalue())
+        self.assertNotIn("[warn]", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

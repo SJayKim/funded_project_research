@@ -87,6 +87,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## Project-Specific Gotchas
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
 - 외부 소스 수집은 `collect_all`에서 어댑터별 try/except로 격리 — 한 소스 실패가 전체 실행을 죽이지 않게. (해외 GitHub Actions IP는 IRIS `www.iris.go.kr` 연결 차단됨 실측 2026-06-23. data.go.kr 4종은 정상.)
+- 정부서버 `www.*.go.kr` 라이브 API는 해외 CI IP에서 지오차단(국내선 0.3s 정상, CI선 30s timeout) — bizinfo `bizinfoApi.do`도 동일(실측 2026-07-01, IRIS와 같은 클래스). 타임아웃 상향 무의미(행만 길어짐). `collect_all`은 `URLError`를 `[info] 지오차단 추정 격리 스킵`으로, 그 외만 `[warn] 수집 실패`로 로깅 — 매일 뜨는 지오차단을 실제 실패로 오인 금지. 신규 어댑터가 `www.*.go.kr` 라이브 host면 CI 수집 불가 전제(data.go.kr 미러가 있으면 그쪽이 CI 안전).
 - 상세페이지 fetch host는 목록 API host와 다름 — enrich가 쓰는 상세 host(`www.k-startup.go.kr`·`www.bizinfo.go.kr` 등)도 `adapters/base._TLS_RELAXED_HOSTS`에 등록해야 AKI 누락 cert가 통과. http_get를 stub하는 단위테스트는 이 갭을 못 잡으니 신규 fetch 경로는 실 fetch 1회로 검증할 것. (실측 2026-06-26: 미등록 시 enrich 100% CERTIFICATE_VERIFY_FAILED.)
 - `store.upsert`는 ON CONFLICT로 전 컬럼을 excluded로 덮음 — `collect_all`이 재수집하는 공고는 LLM/enrich로 채운 파생필드(`summary`·추출 6필드)가 ""로 유실된다. `run()`에서 `previous`로부터 carry-forward 필수. 신규 파생필드 추가 시 carry-forward 목록에도 등록할 것. (실측 2026-06-26: 미보존 시 origin/data ok 100→50, 재현 테스트 `test_extraction_preserved_on_recollect`.)
 

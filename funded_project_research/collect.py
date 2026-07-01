@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import date, datetime
+from urllib.error import URLError
 
 from . import classify, diff, extract, notify_email, summarize
 from .adapters.base import RawNotice, http_get
@@ -31,11 +32,15 @@ CORPUS_DIR = "corpus"
 
 def collect_all() -> list[RawNotice]:
     # 어댑터별 격리: 한 소스 실패가 전체 실행을 죽이지 않게 건너뛰고 나머지 진행.
-    # (해외 CI IP에서 IRIS(www.iris.go.kr) 연결 차단 실측 2026-06-23)
+    # 해외 CI IP는 일부 정부서버(www.iris.go.kr·www.bizinfo.go.kr)를 지오차단 —
+    # 국내선 정상이나 CI선 timeout(실측 IRIS 2026-06-23, bizinfo 2026-07-01).
+    # 도달 실패(URLError)는 예상된 격리라 [info], 그 외는 실제 실패라 [warn].
     raws: list[RawNotice] = []
     for cls in ADAPTERS:
         try:
             raws += cls().collect()
+        except URLError as e:
+            print(f"[info] {cls.__name__} CI 미도달(지오차단 추정), 격리 스킵: {e}", file=sys.stderr)
         except Exception as e:
             print(f"[warn] {cls.__name__} 수집 실패, 건너뜀: {e}", file=sys.stderr)
     return raws
