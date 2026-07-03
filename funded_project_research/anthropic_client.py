@@ -7,10 +7,16 @@ Opus 4.8 계약: temperature/top_p/top_k/budget_tokens는 보내면 400 — body
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+
+
+def llm_enabled() -> bool:
+    """LLM_ENABLED env 스위치. 미설정/빈 값(Variable 없을 때 vars.*는 빈 문자열)은 on."""
+    return (os.environ.get("LLM_ENABLED") or "1").strip().lower() not in ("0", "off", "false")
 
 
 def post_message(body: dict, api_key: str, timeout: int = 30) -> dict:

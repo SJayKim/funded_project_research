@@ -46,6 +46,8 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           # 미설정 시 빈 문자열 → summarize가 규칙 fallback으로 정상 동작.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # LLM 스위치(repo Variable). 미설정/빈 값=on, "off"=요약 fallback+enrich 스킵.
+          LLM_ENABLED: ${{ vars.LLM_ENABLED }}
           # 모델 오버라이드(미설정 시 코드 기본값: 요약=Haiku, 추출=Sonnet).
           SUMMARIZE_MODEL: ${{ secrets.SUMMARIZE_MODEL }}
           EXTRACT_MODEL: ${{ secrets.EXTRACT_MODEL }}

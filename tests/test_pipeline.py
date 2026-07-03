@@ -430,6 +430,28 @@ class TestSummarizeRequest(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("LLM_ENABLED", None)
+
+    def test_llm_enabled_default_on(self):
+        os.environ.pop("LLM_ENABLED", None)
+        self.assertTrue(anthropic_client.llm_enabled())      # 미설정 → on
+        os.environ["LLM_ENABLED"] = ""
+        self.assertTrue(anthropic_client.llm_enabled())      # 빈 Variable → on
+        os.environ["LLM_ENABLED"] = "off"
+        self.assertFalse(anthropic_client.llm_enabled())
+
+    def test_llm_off_summarize_fallback(self):
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        os.environ["LLM_ENABLED"] = "off"
+        called = []
+        orig = anthropic_client.urllib.request.urlopen
+        anthropic_client.urllib.request.urlopen = lambda *a, **k: called.append(1)
+        try:
+            out = summarize.summarize([rec("kstartup", "1", title="AI 공고", agency="중기부")])
+        finally:
+            anthropic_client.urllib.request.urlopen = orig
+        self.assertEqual(called, [])              # 키 있어도 네트워크 호출 0
+        self.assertTrue(out["kstartup:1"])        # fallback 문자열 존재
 
     def test_no_key_fallback_no_network(self):
         os.environ.pop("ANTHROPIC_API_KEY", None)
@@ -633,6 +655,17 @@ class TestEnrich(unittest.TestCase):
         out = collect.enrich(self.store)
         self.assertTrue(out.get("skipped_no_key"))
         self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")
+
+    def test_llm_off_enrich_skipped(self):
+        from funded_project_research import collect
+        os.environ["LLM_ENABLED"] = "off"
+        try:
+            self._seed([_erec("kstartup", "1")])
+            out = collect.enrich(self.store)
+        finally:
+            os.environ.pop("LLM_ENABLED", None)
+        self.assertTrue(out.get("skipped_llm_off"))
+        self.assertEqual(self.store.load()["kstartup:1"].extraction_status, "")  # 재활성화 시 자동 재시도
 
     def test_hallucinated_values_dropped_to_no_info(self):
         from funded_project_research import collect, extract

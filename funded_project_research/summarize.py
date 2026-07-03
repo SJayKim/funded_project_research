@@ -47,9 +47,10 @@ def _anthropic_message(prompt: str, api_key: str) -> str:
 def summarize(records: list[NoticeRecord]) -> dict[str, str]:
     """key -> 요약. API 키 없으면 전건 fallback(네트워크 호출 0). 건별 실패도 fallback."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
+    llm_on = anthropic_client.llm_enabled()
     out: dict[str, str] = {}
     for rec in records:
-        if not api_key:
+        if not api_key or not llm_on:
             out[rec.key] = _fallback(rec)
             continue
         try:

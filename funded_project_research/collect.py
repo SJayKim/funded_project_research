@@ -11,7 +11,7 @@ import sys
 from datetime import date, datetime
 from urllib.error import URLError
 
-from . import classify, diff, extract, notify_email, summarize
+from . import anthropic_client, classify, diff, extract, notify_email, summarize
 from .adapters.base import RawNotice, http_get
 from .adapters.bizinfo import BizinfoAdapter
 from .adapters.iris import IrisAdapter
@@ -121,6 +121,10 @@ def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
     상한 cap 초과분은 이월(다음 런). 공고별 try/except로 1건 실패가 전체 안 죽임.
     fetch 예외는 status 미기록 → 다음 런 재시도(일시적 timeout 실측 2026-06-25).
     """
+    if not anthropic_client.llm_enabled():
+        # em dash 등 cp949 밖 문자는 로컬 Windows 콘솔에서 UnicodeEncodeError — 로그는 cp949-safe로.
+        print("[info] LLM off (LLM_ENABLED) - enrich 스킵")
+        return {"enriched": 0, "dropped": 0, "skipped_llm_off": True}
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return {"enriched": 0, "dropped": 0, "skipped_no_key": True}
