@@ -425,7 +425,7 @@ function updateChips(filters) {
   host.hidden = host.childElementCount === 0;
   if (!host.hidden) { const reset = element('button', 'reset', '전체 초기화'); reset.type = 'button'; reset.onclick = resetFilters; host.append(reset); }
 }
-const healthLabels = {success: '수집 완료', empty: '정상 응답 0건', partial: '부분 수집', failed: '수집 실패'};
+const healthLabels = {success: '수집 응답 완료', empty: '정상 응답 0건', partial: '부분 수집', failed: '수집 실패'};
 function displayTime(value, legacy = false) {
   if (!value) return '기록 없음';
   const date = new Date(legacy && !/[Z+-]\d*:?\d*$/.test(value.slice(10)) ? value + 'Z' : value);
@@ -440,13 +440,13 @@ function renderHealth(now) {
       const checked = instant(h.completed_at);
       const old = checked === null || now.getTime() < checked || now.getTime() - checked > 48 * 3600000;
       p.textContent = name + ': ' + (healthLabels[h.state] || '상태 미확인') + (old ? ' · 갱신 지연' : '')
-        + ' · 최근 시도 ' + displayTime(h.completed_at) + ' · ' + h.count + '건'
-        + ' · 마지막 완전 수집 ' + displayTime(h.last_success);
+        + ' · 최근 시도 ' + displayTime(h.completed_at) + ' · 응답 ' + h.count + '건'
+        + ' · 마지막 정상 완료 ' + displayTime(h.last_success);
     } else {
       const entry = distribution[source];
       const seen = entry ? entry.latest : '';
       p.textContent = name + ': 수집 상태 미확인 · 누적 ' + (distribution[source]?.count || 0) + '건'
-        + ' · 과거 저장 기록 ' + displayTime(seen, true);
+        + (seen ? ' · 과거 저장 기록 ' + displayTime(seen, true) : ' · 저장 기록 없음');
     }
     el.appendChild(p);
   }
