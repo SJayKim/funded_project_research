@@ -32,8 +32,8 @@ docs/                         # 조사, 기획, 세션 문서
 Python 3.13 기준입니다. 외부 패키지 의존성 없이 표준 라이브러리 중심으로 동작합니다.
 
 ```powershell
-# 테스트
-python -m unittest
+# 테스트 (외부 API·실제 메일·유료 LLM 호출 없음)
+python -m unittest discover -s tests -v
 
 # 공고 수집 및 저장
 python -m funded_project_research.collect
@@ -52,6 +52,30 @@ python -m funded_project_research.eval_extract
 ```
 
 대시보드는 기본적으로 `gov_notices.db`를 읽고 `http://127.0.0.1:8000`에서 실행됩니다.
+
+## 대시보드 화면과 배포
+
+지원·사업 공고와 입찰을 구분하고 제목·기관·요약·검증된 발췌를 검색합니다.
+분야·출처·마감 포함 필터, 표/카드 보기, 목록 안 상세 펼침을 제공하며 결과는
+가까운 마감순으로 50건씩 표시합니다. 마감 정보가 없으면 `마감 미확인`으로
+남기고 접수중을 추정하지 않습니다. D-day는 브라우저의 한국 현재 시각 기준입니다.
+
+정적 빌드는 `site/index.html`과 `site/assets/`를 함께 생성합니다. Pretendard
+v1.3.9는 로컬 폰트 파일로 제공하며 배포 라이선스는
+`funded_project_research/assets/pretendard/LICENSE.txt`에 포함합니다.
+
+`dashboard` workflow는 화면 변경을 main에 반영하거나 수동 실행할 때 기존
+data 브랜치의 DB를 읽어 Pages만 갱신합니다. 수집·메일 발송·DB 저장은 실행하지
+않습니다. 예약 수집 workflow와 같은 실행 그룹을 사용해 배포가 겹치지 않게 합니다.
+
+브라우저 날짜·필터·링크 규칙 테스트는 Node가 있으면 기본 unittest에서 함께
+실행하며 CI에는 Node를 설치합니다. Playwright가 설치된 환경에서는 로컬 정적
+서버를 띄운 뒤 `node tests/dashboard_browser.cjs http://127.0.0.1:48272/`로
+실제 화면·검색·키보드·작은 화면·안전한 텍스트 렌더링도 검사할 수 있습니다.
+기록과 스크린샷은 `.gstack/dashboard-verification/`에 저장됩니다.
+
+HTML에는 아직 전체 공고 데이터가 포함됩니다. 50건씩 표시하는 것은 DOM 크기를
+제한하는 조치이며 초기 다운로드 용량 분할은 별도 후속 작업입니다.
 
 ## 환경변수
 

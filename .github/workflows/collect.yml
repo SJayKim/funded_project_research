@@ -10,6 +10,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: collect-data-pages
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pages: write
