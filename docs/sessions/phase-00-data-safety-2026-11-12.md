@@ -1,11 +1,12 @@
 # Phase 0 인계 — 로컬 구현·검증 완료
 
-확인: 2026-11-12 KST · 운영 적용: 미적용 · GitHub CI: 작업 브랜치에서 확인 예정
+확인: 2026-11-12 KST · 운영 적용: 미적용 · GitHub CI: 푸시 권한 부족으로 미실행
 
 ## 기준과 결과
 
 - 위치: `/Users/manager/Desktop/funded_project_research`.
 - 브랜치: `improve/phase-00-data-safety`, 시작 코드 `86f63b343697c23b485946ec65be3c58c16ef804`.
+- 검증한 제품 판: `d274240`. 이후 커밋은 이 인계의 상태 기록만 갱신한다.
 - 범위: 계획서 Phase 0의 테스트 진입점, DB 보호, 수집 직렬화, 복구 안내.
 - 제품 수집·알림·날짜·분류·요약·화면 로직과 DB 스키마는 변경하지 않았다.
 - 수집 전 테스트 → 복원/검사 → 백업 artifact 보존 → 수집 → DB 재검사 → 저장/배포 순서다. 앞 단계 실패를 무시하는 분기를 제거했다.
@@ -28,6 +29,7 @@
 | 운영 DB 사본 복원/검증 | 공고 75,221, 알림 135,770, 무결성 `ok`, 바이트 동일 | 원격 DB 읽기만 수행 |
 | 복원 DB의 정적 빌드 | 성공 | 화면·사용성 검증을 대신하지 않음 |
 | `git diff --check` | 통과 | 사용자 미추적 문서 원본 해시 보존 |
+| GitHub Python 3.13 CI | 미실행 | workflow 수정 권한 부족으로 branch push 거절; Phase 0의 원격 완료 조건은 남아 있음 |
 
 로컬 명령은 Python 3.13을 지정하기 위해 `uv run --no-project --python 3.13`을 앞에 붙였다.
 로컬 상세 자료는 Git 제외 경로 `.gstack/phase-00/`에 있다:
@@ -42,7 +44,7 @@ CI는 `.github/workflows/test.yml`에서 같은 unittest 명령을 실행한다.
 - 기존 감사 사본: `.gstack/qa-reports/2026-11-12/gov_notices.db`.
 - 복원 사본: `.gstack/phase-00/restored-gov.db`.
 - 백업/메타데이터: `.gstack/phase-00/production-baseline/{gov_notices.db,manifest.json}`.
-- manifest의 코드 SHA는 원본 기준선 `86f63b3`이다. 이번 안전장치 수정은 그 판에서 작업한 diff로 검증했으며 최종 제품 판은 이 문서가 포함된 Git 이력을 확인한다.
+- manifest의 코드 SHA는 원본 기준선 `86f63b3`이다. 그 판에서 작업한 diff를 검증한 후 제품 판 `d274240`으로 커밋했다. 후속 문서 커밋과 제품 판을 구분한다.
 - 복구 절차는 [README](../../README.md#복원-실패와-복구)에 있다. 백업 이후의 알림 이력을 지우는 롤백은 하지 않는다.
 
 ## 중단·보존 사항
@@ -53,10 +55,18 @@ CI는 `.github/workflows/test.yml`에서 같은 unittest 명령을 실행한다.
 - `CLAUDE.md`의 “빌드/테스트 없음” 안내와 실제 코드가 충돌한다. 실제 코드·테스트를 따르고 README의 표준 명령을 정정했다. 출처별 접근 실패 원인 등의 오래된 지침은 해당 phase에서 검증한다.
 - 사용자 미추적 `AUDIT-2026-11-12.md`, `docs/planning/dashboard-improvement-plan-2026-11-12.md`는 원본을 보존했고 이 커밋에 넣지 않는다.
 
+## 원격 게시 막힘
+
+- `git push -u origin improve/phase-00-data-safety`가 GitHub에서 거절됐다: OAuth 인증에 `.github/workflows/collect.yml` 수정에 필요한 `workflow` scope가 없다.
+- 기존 gh 인증의 scope는 `gist, read:org, repo`다. 키·토큰을 출력하거나 변경하지 않았다.
+- 기존 SSH agent 인증도 `Permission denied (publickey)`로 실패했다. HTTPS로 받은 GitHub 호스트 공개 키는 로컬 검증용 임시 known_hosts에만 사용했고 인증 설정은 바꾸지 않았다.
+- 원격 branch/PR은 생성하지 못했다. **push pending: `improve/phase-00-data-safety`**.
+- 사람 확인이 필요한 것은 GitHub 인증의 `workflow` 권한 부여다. 계정 소유자가 `gh auth refresh -h github.com -s workflow`로 갱신한 뒤 기존 작업 브랜치를 push하고 `tests` workflow를 확인하면 된다. 계획 범위에 대한 재승인은 필요하지 않다.
+
 ## 다음 세션
 
 1. [현재 인계](HANDOFF-CURRENT.md), 로컬 계획서 Phase 1, 현재 branch/status를 확인한다.
-2. Phase 0 작업 브랜치의 최신 검증 판에서 `improve/phase-01-date-status`를 분기한다. 운영 main에는 아직 Phase 0이 없다.
+2. GitHub 인증 갱신 뒤 같은 Phase 0 브랜치를 push하고 Python 3.13 CI를 확인한다. 통과한 판에서 `improve/phase-01-date-status`를 분기한다. 운영 main에는 아직 Phase 0이 없다.
 3. 날짜·접수 상태 공통 fixture와 최소 보존 필드부터 시작한다. 한국 자정/마감 시각/종료 상태/충돌/잘못된 달력/중복 이행이 Phase 1 완료 기준이다.
 
 구현 판단 이력: [구현노트](../impl-notes/2026-11-12-phase-00-data-safety.md).
