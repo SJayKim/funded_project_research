@@ -91,7 +91,7 @@ python -m scripts.ci_db restore --db gov_notices.db --backup-dir .gstack/db-base
 3. 실패 실행 또는 마지막 검증 실행의 `db-baseline-*` artifact를 별도 폴더에 내려받습니다. `manifest.json`의 코드/data SHA·건수·해시를 확인하고 `python -m scripts.ci_db validate --db <백업>/gov_notices.db` 결과와 대조합니다. artifact 보존 기간이 지났으면 `data` 브랜치 Git 이력의 DB를 별도 파일로 추출해 검사합니다.
 4. 해당 백업 이후 수집·메일 발송·알림 이력 변경이 없고 최신 `data` SHA와의 관계를 확인한 경우에만, `data`의 최신 커밋에서 복구 커밋을 만들어 일반 push합니다. 강제 push와 이력 초기화를 하지 않습니다. 건수뿐 아니라 공고 키·`first_seen`·`last_seen`·`alerts`를 대조합니다.
 5. 백업 이후 발송이 있었거나 결과가 불명확하면 **과거 DB로 바로 덮지 않습니다**. 최신 알림 이력을 보존·대조한 뒤 복구해야 중복 메일을 막을 수 있습니다. SMTP와 DB 저장 사이의 중단 문제는 이후 Phase 11~12에서 다룹니다.
-6. 복구 DB를 다시 검사하고 테스트·정적 빌드를 확인한 뒤 수집 일정을 재개합니다. 이번 Phase 0은 스키마를 바꾸지 않으므로 코드만 되돌릴 때 DB 이행은 필요하지 않습니다.
+6. 복구 DB를 다시 검사하고 테스트·정적 빌드를 확인한 뒤 수집 일정을 재개합니다. 코드 되돌림과 데이터 복원은 별개입니다. 신뢰성 배포에서 추가한 컬럼·검증 이력·알림 이력을 코드 되돌림 때문에 삭제하지 않습니다.
 
 현재 구현·검증과 다음 단계는 [현재 인계](docs/sessions/HANDOFF-CURRENT.md)를 참고하세요.
 
@@ -99,7 +99,7 @@ python -m scripts.ci_db restore --db gov_notices.db --backup-dir .gstack/db-base
 
 접수 상태와 D-day는 한국 현재 시각으로 계산합니다. 개별 공고를 확인한 기록이 없거나
 48시간이 지나면 `확인 필요`로 표시하며, 마감임박/확인된 마감 전 집계에서 제외합니다.
-기존 `last_seen`은 검증 시각으로 소급 사용하지 않습니다. 출처별 수집 완료·정상 0건·
+기존 `last_seen`은 검증 시각으로 소급 사용하지 않습니다. 출처별 수집 응답 완료·정상 0건·
 부분 수집·실패는 별도로 저장합니다. 수집 오류가 있으면 기존 데이터와 오류 상태를
 배포한 뒤 Actions를 실패로 표시합니다.
 
