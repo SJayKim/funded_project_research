@@ -724,15 +724,18 @@ class TestEvalScoring(unittest.TestCase):
         self.assertFalse(r["passed"])
 
 
-@unittest.skipUnless(os.environ.get("ANTHROPIC_API_KEY"), "실모델 EVAL: API 키 필요(유료)")
+@unittest.skipUnless(os.environ.get("RUN_LIVE_EVAL") == "1" and os.environ.get("ANTHROPIC_API_KEY"),
+                     "실모델 EVAL: RUN_LIVE_EVAL=1 및 API 키 필요(유료)")
 class TestExtractEvalLive(unittest.TestCase):
-    """fixture 전체에 실모델 추출 — 키 있을 때만(일반 런 skip). 음성케이스 환각 0 검증."""
+    """fixture 실모델 평가 — 명시적 opt-in과 키가 모두 있어야 실행한다."""
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")  # 다른 단위테스트의 환경 정리와 분리
 
     def test_all_fixtures_pass(self):
         from funded_project_research import eval_extract
         fixtures = eval_extract.load_fixtures()
         self.assertTrue(fixtures, "fixture 없음")
-        results = eval_extract.run(fixtures, os.environ["ANTHROPIC_API_KEY"])
+        results = eval_extract.run(fixtures, self.api_key)
         fails = [r for r in results if not r["passed"]]
         self.assertEqual(fails, [], f"EVAL 실패: {fails}")
 
