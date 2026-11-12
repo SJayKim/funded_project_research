@@ -29,4 +29,16 @@ GitHub 예약 실행은 지연되거나 누락될 수 있으므로 정시 완료
 
 운영 DB 사본에서 원문 100건 중 98건을 확인했고 2건은 미확인으로 남겼다. 공고 75,221건·알림 135,770건과 공고 ID·최초/마지막 수집일을 보존했다. 이미 존재하던 출처 장애와 14일 내 원문 미확인 143건 때문에 데이터 판정은 `attention`이다. 이를 정상이라고 덮지 않았다.
 
-Chromium에서 검색·페이지 이동·상세 펼침·320~1440px와 8시간 경과의 자동 경고 전환을 확인했다. 로컬 서버에서 점검 JSON과 약 50MB HTML 바이트 일치 검사도 통과했다. 근거는 작업 폴더 `.gstack/periodic-reliability/`와 `.gstack/dashboard-verification/`에 보관한다. 운영 활성화는 CI 통과 후 병합·수동 1회 실행·별도 감시 실행·공개 화면으로 확인한다.
+Chromium에서 검색·페이지 이동·상세 펼침·320~1440px와 8시간 경과의 자동 경고 전환을 확인했다. 로컬 서버에서 점검 JSON과 약 50MB HTML 바이트 일치 검사도 통과했다. 근거는 작업 폴더 `.gstack/periodic-reliability/`와 `.gstack/dashboard-verification/`에 보관한다. 운영 활성화 결과는 아래에 기록했다.
+
+## 운영 활성화 확인
+
+[PR #5](https://github.com/SJayKim/funded_project_research/pull/5)의 CI 통과 후 main `f61c259`에 병합했다. `collect`의 두 예약 주기와 `reliability-watch`는 활성 상태다. 수동 `health_only=true`도 예약 점검과 같은 경로를 사용하며, 실제 실행에서 기존 `Run collector` 단계가 생략된 것을 확인했다.
+
+[첫 운영 점검](https://github.com/SJayKim/funded_project_research/actions/runs/43211484270)은 2026-11-12 20:51:41 KST에 완료 기록을 저장했다. 원문 100건 중 82건 확인, 18건 미확인, 기간 갱신 3건이다. 미확인 원인은 신청기간 필드 부재 2건과 조회 오류 16건이다. 출처 장애 4개와 임박 원문 미확인 151건도 `attention`으로 기록했다. DB 저장·Pages 배포·공개 JSON/HTML 대조는 통과했고, 마지막 데이터 문제 보고 단계에서 실행을 실패로 남겼다.
+
+운영 data `1e4fd49`를 내려받아 백업과 대조했다. 공고 75,221건·알림 135,770건 및 수정 허용 필드 외의 공고 컬럼은 양방향 비교에서 차이가 없었다. 원문 시도 100건과 실행 보고서 1건을 저장했다. 저장된 시도 이력으로 다음 대상 100건을 계산했을 때 직전 대상과 중복은 0건이었다.
+
+[별도 누락 감시](https://github.com/SJayKim/funded_project_research/actions/runs/43212901340)는 공개 기록의 8시간 이내 갱신을 확인하고 성공했다. [대시보드 배포](https://github.com/SJayKim/funded_project_research/actions/runs/43211482305)도 성공했다. 공개 화면에서 점검 시각·82건 확인·18건 미확인 표시와 375px 표시를 확인했고 브라우저 오류는 없었다.
+
+이 검증은 수동 첫 실행과 활성 예약 설정의 확인이다. 앞으로 예정된 정기 실행 3회가 이미 끝났다는 뜻은 아니다. 실제 후속 실행마다 DB의 보고서와 Actions 결과가 누적된다. 현재 출처 장애와 미검증 공고의 복구는 별도 후속 작업으로 남는다.
