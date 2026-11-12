@@ -4,13 +4,14 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const code = readFileSync(require('node:path').join(__dirname, '../funded_project_research/serve.py'), 'utf8')
-  .split('<script>')[1].split('// DOM wiring')[0].replace('__DATA__', '[]');
+  .split('<script>')[1].split('// DOM wiring')[0].replace('__DATA__', '[]').replace('__HEALTH__', '[]')
+  .replace('__STATUS_JS__', readFileSync(require('node:path').join(__dirname, '../funded_project_research/status.js'), 'utf8'));
 const context = vm.createContext({ Date, URL });
 vm.runInContext(code, context);
 const { parseDeadline, noticeState, isNew, filterNotices, safeUrl, koreanDate } = context;
 const now = new Date('2026-11-12T07:00:00Z'); // 16:00 KST
 const filters = { q: '', kind: 'support', source: 'all', cat: '__ALL__', view: 'all', hideClosed: true, sort: 'near' };
-const record = (extra = {}) => ({ source: 'kstartup', source_id: '1', title: '공고', status: '', deadline: '2026-11-15', ...extra });
+const record = (extra = {}) => ({ source: 'kstartup', source_id: '1', title: '공고', status: '', deadline: '2026-11-15', source_checked_at: '2026-11-12T07:00:00Z', summary_current: true, extraction_current: true, ...extra });
 const ids = rows => Array.from(rows, ({ d }) => d.source_id);
 
 test('D-day uses current Korean date, not last collection or browser time zone', () => {
@@ -32,8 +33,8 @@ test('date-only deadlines remain valid throughout the Korean day without inventi
 test('explicit deadline times and closed source status override open labels', () => {
   assert.equal(noticeState(record({ deadline: '2026-11-12 15:59:00', status: 'Y' }), now).label, '마감');
   assert.equal(noticeState(record({ deadline: '2026-12-31', status: 'N' }), now).closed, true);
-  assert.equal(noticeState(record(), now).label, '미확인');
-  assert.equal(noticeState(record({ status: 'Y' }), now).label, '접수중');
+  assert.equal(noticeState(record(), now).label, '마감 전');
+  assert.equal(noticeState(record({ status: 'Y', source_checked_at: '' }), now).label, '확인 필요');
 });
 test('newly collected uses UTC collection timestamps and Korean calendar days', () => {
   assert.equal(isNew(record({ first_seen: '2026-11-09T16:00:00' }), now), true);
@@ -53,6 +54,8 @@ test('search preserves agency, summary, target, specialized agency and verified 
     assert.equal(filterNotices([record({ [field]: '검증단어', extraction_status: 'ok' })], { ...filters, q: '검증단어' }, now).length, 1, field);
   }
   assert.equal(filterNotices([record({ required_docs: '실패발췌', extraction_status: 'failed' })], { ...filters, q: '실패발췌' }, now).length, 0);
+  assert.equal(filterNotices([record({ summary: '오래된요약', summary_current: false })], { ...filters, q: '오래된요약' }, now).length, 0);
+  assert.equal(filterNotices([record({ key_dates: '오래된일정', extraction_status: 'ok', extraction_current: false })], { ...filters, q: '오래된일정' }, now).length, 0);
 });
 test('unknown deadlines sort last in either direction and remain accessible', () => {
   const data = [record({ source_id: 'unknown', deadline: '' }), record({ source_id: 'far', deadline: '2026-12-31' }), record({ source_id: 'near', deadline: '2026-11-13' })];
@@ -61,8 +64,9 @@ test('unknown deadlines sort last in either direction and remain accessible', ()
   assert.deepEqual(ids(filterNotices(data, { ...filters, view: 'unknown' }, now)), ['unknown']);
 });
 test('seven-day view excludes closed and unknown dates even when closed notices are included', () => {
-  const data = [record({ source_id: 'valid' }), record({ source_id: 'closed', status: 'N' }), record({ source_id: 'unknown', deadline: '' }), record({ source_id: 'expired', deadline: '2026-11-12 14:00' })];
+  const data = [record({ source_id: 'valid' }), record({ source_id: 'closed', status: 'N' }), record({ source_id: 'unknown', deadline: '' }), record({ source_id: 'expired', deadline: '2026-11-12 14:00' }), record({ source_id: 'stale', source_checked_at: '2026-11-09T07:00:00Z' }), record({ source_id: 'conflict', verification_status: 'conflict' }), record({ source_id: 'scheduled', starts_at: '2026-11-14' })];
   assert.deepEqual(ids(filterNotices(data, { ...filters, view: 'soon', hideClosed: false }, now)), ['valid']);
+  assert.deepEqual(ids(filterNotices(data, { ...filters, view: 'unknown' }, now)), ['stale', 'conflict', 'unknown']);
 });
 test('category and source filters combine; all archived records remain reachable', () => {
   const data = [record({ source_id: '1', source: 'bizinfo', category: '로봇', status: 'N' }), record({ source_id: '2', source: 'iris', category: 'AI' })];

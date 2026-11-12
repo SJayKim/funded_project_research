@@ -404,6 +404,8 @@ class TestSummaryCaching(unittest.TestCase):
         enriched = rec("kstartup", "1", title="AI 자동화 R&D")
         enriched.key_dates = "2026-07-01 ~ 2026-07-31"
         enriched.extraction_status = "ok"
+        from funded_project_research.normalize import content_basis
+        enriched.extraction_basis = content_basis(enriched)
         self.store.upsert(enriched, "2026-06-22T00:00:00")  # enrich 결과 모사
         run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)  # 추출필드 공란 재수집
         loaded = self.store.load()["kstartup:1"]
@@ -724,15 +726,18 @@ class TestEvalScoring(unittest.TestCase):
         self.assertFalse(r["passed"])
 
 
-@unittest.skipUnless(os.environ.get("ANTHROPIC_API_KEY"), "실모델 EVAL: API 키 필요(유료)")
+@unittest.skipUnless(os.environ.get("RUN_LIVE_EVAL") == "1" and os.environ.get("ANTHROPIC_API_KEY"),
+                     "실모델 EVAL: RUN_LIVE_EVAL=1 및 API 키 필요(유료)")
 class TestExtractEvalLive(unittest.TestCase):
-    """fixture 전체에 실모델 추출 — 키 있을 때만(일반 런 skip). 음성케이스 환각 0 검증."""
+    """fixture 실모델 평가 — 명시적 opt-in과 키가 모두 있어야 실행한다."""
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")  # 다른 단위테스트의 환경 정리와 분리
 
     def test_all_fixtures_pass(self):
         from funded_project_research import eval_extract
         fixtures = eval_extract.load_fixtures()
         self.assertTrue(fixtures, "fixture 없음")
-        results = eval_extract.run(fixtures, os.environ["ANTHROPIC_API_KEY"])
+        results = eval_extract.run(fixtures, self.api_key)
         fails = [r for r in results if not r["passed"]]
         self.assertEqual(fails, [], f"EVAL 실패: {fails}")
 
@@ -815,6 +820,7 @@ class TestServe(unittest.TestCase):
         self.assertIn('aria-label="공고 검색"', page)
 
 
+
 class TestCollectIsolation(unittest.TestCase):
     def test_one_adapter_failure_isolated(self):  # 한 소스 실패가 전체 수집을 죽이지 않음
         from funded_project_research import collect
@@ -835,7 +841,7 @@ class TestCollectIsolation(unittest.TestCase):
             collect.ADAPTERS = orig
         self.assertEqual([r.source for r in raws], ["kstartup"])
 
-    def test_geoblock_urlerror_is_info_not_warn(self):  # CI 지오차단(URLError)은 격리+info, warn 아님
+    def test_network_error_is_visible_without_claiming_geoblock(self):
         import io
         from contextlib import redirect_stderr
         from urllib.error import URLError
@@ -854,8 +860,9 @@ class TestCollectIsolation(unittest.TestCase):
         finally:
             collect.ADAPTERS = orig
         self.assertEqual(raws, [])
-        self.assertIn("[info]", buf.getvalue())
-        self.assertNotIn("[warn]", buf.getvalue())
+        self.assertIn("[warn]", buf.getvalue())
+        self.assertIn("network", buf.getvalue())
+        self.assertNotIn("지오차단", buf.getvalue())
 
 
 if __name__ == "__main__":

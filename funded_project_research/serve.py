@@ -1,10 +1,11 @@
 """정부과제 검색 대시보드. 검색·필터·상세보기는 클라이언트 JS로 동작한다.
 
-127.0.0.1 전용. 서버는 요청당 DB 1회 조회 후 JSON 임베드 HTML과 로컬 폰트를 제공한다.
+127.0.0.1 전용. 서버는 공고와 수집 상태를 읽어 JSON 임베드 HTML과 로컬 폰트를 제공한다.
 DB 없으면 안내 출력 후 종료.
 """
 from __future__ import annotations
 
+from dataclasses import fields
 import http.server
 import json
 import os
@@ -12,6 +13,9 @@ from pathlib import Path
 import shutil
 import sqlite3
 import sys
+
+from .normalize import NoticeRecord, content_basis
+from .store import NEW_COLUMNS
 
 DB_PATH = os.environ.get("GOV_DB", "gov_notices.db")
 PORT = int(os.environ.get("PORT", "8000"))
@@ -231,7 +235,7 @@ mark { background: #fff0b3; color: var(--ink); padding: 0 1px; }
 <header class="topbar"><div class="top-inner"><div class="wordmark">정부과제<span>공고 탐색</span></div><div class="updated">공식 출처의 공고를 한곳에서</div></div></header>
 <main>
 <section class="intro"><div><h1>정부과제 찾기</h1><p>지원사업·연구개발 공고를 찾고 원문을 확인하세요.</p></div><button type="button" class="quiet" id="health-toggle" aria-controls="health" aria-expanded="false">수집 정보</button></section>
-<section class="notice" id="health" hidden aria-label="수집 정보"><h2>저장된 공고 정보</h2><p>전체 <strong id="total"></strong>건 · 마지막 수집 기록 <strong id="updated"></strong></p><ul id="dist"></ul><p>출처별 수집 성공 여부는 아직 확인할 수 없습니다. 수집 기록은 각 공고의 최신성이나 현재 접수 여부를 보장하지 않습니다.</p></section>
+<section class="notice" id="health" hidden aria-label="수집 정보"><h2>저장된 공고 정보</h2><p>전체 <strong id="total"></strong>건 · 마지막 수집 기록 <strong id="updated"></strong></p><ul id="dist"></ul><p>마감 전 표시는 최근 48시간 안에 확인한 신청기간 기준입니다. 확인이 오래되거나 정보가 상충하면 재확인이 필요합니다. 수집 완료도 신청자격을 보장하지 않습니다.</p></section>
 <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="q" type="search" placeholder="공고명, 기관, 관심 분야를 검색하세요" aria-label="공고 검색" autocomplete="off"></div>
 <nav class="tabs" aria-label="공고 종류"><button type="button" data-kind="support" aria-pressed="true">지원·사업 공고</button><button type="button" data-kind="bid" aria-pressed="false">입찰</button><button type="button" data-kind="all" aria-pressed="false">전체</button></nav>
 <div class="tools"><div class="views" id="view" role="group" aria-label="빠른 필터"><button type="button" data-view="all" aria-pressed="true">전체</button><button type="button" data-view="soon" aria-pressed="false">7일 내 마감</button><button type="button" data-view="new" aria-pressed="false">새로 수집</button></div><div class="tools-right"><select id="sort" aria-label="정렬"><option value="near">가까운 마감순</option><option value="far">먼 마감순</option></select><button type="button" class="quiet" id="filter-toggle" aria-controls="filters" aria-expanded="false">상세 필터</button></div></div>
@@ -246,6 +250,8 @@ mark { background: #fff0b3; color: var(--ink); padding: 0 1px; }
 </main>
 <script>
 const DATA = __DATA__;
+const HEALTH = __HEALTH__;
+__STATUS_JS__
 const SRC = { kstartup: 'K-Startup', bizinfo: '기업마당', msit: '과기정통부', nara: '나라장터', iris: 'IRIS' };
 const EXCERPTS = [['funding_amount', '지원금액'], ['eligibility', '신청자격'], ['required_docs', '제출서류'], ['key_dates', '주요일정']];
 const DAY = 86400000;
@@ -268,8 +274,9 @@ function parseDeadline(value) {
 function noticeState(d, now = new Date()) {
   const deadline = parseDeadline(d.deadline);
   const days = deadline ? Math.round((deadline.utc - Date.parse(koreanDate(now) + 'T00:00:00Z')) / DAY) : null;
-  const closed = d.status === 'N' || Boolean(deadline && now.getTime() >= deadline.end);
-  return { deadline, days, closed, label: closed ? '마감' : d.status === 'Y' ? '접수중' : '미확인', tone: closed ? 'closed' : d.status === 'Y' ? 'open' : 'unknown' };
+  const kind = reliabilityState(d, now);
+  const labels = { open: '마감 전', closed: '마감', scheduled: '접수 예정', unknown: '확인 필요', conflict: '정보 상충' };
+  return { deadline, days, kind, closed: kind === 'closed', label: labels[kind], tone: ['open', 'closed'].includes(kind) ? kind : 'unknown' };
 }
 function isNew(d, now = new Date()) {
   // 운영 GitHub Actions는 UTC로 실행된다. 기존 시간대 없는 수집 기록도 UTC로 해석한다.
@@ -280,8 +287,9 @@ function isNew(d, now = new Date()) {
   return age >= 0 && age <= 2;
 }
 function searchFields(d) {
-  const fields = ['title', 'summary', 'agency', 'target', 'specialized_agency', 'category'];
-  if (d.extraction_status === 'ok') fields.push(...EXCERPTS.map(([field]) => field));
+  const fields = ['title', 'agency', 'target', 'specialized_agency', 'category'];
+  if (d.summary_current) fields.push('summary');
+  if (d.extraction_status === 'ok' && d.extraction_current) fields.push(...EXCERPTS.map(([field]) => field));
   return fields.map(field => String(d[field] || '')).concat(SRC[d.source] || d.source || '');
 }
 function safeUrl(value) {
@@ -299,9 +307,9 @@ function filterNotices(data, filters, now = new Date()) {
     return !query || searchFields(d).some(text => text.toLowerCase().includes(query));
   }).map(d => ({ d, state: noticeState(d, now) })).filter(({ d, state }) => {
     if (filters.hideClosed && state.closed) return false;
-    if (filters.view === 'soon' && (state.closed || state.days === null || state.days < 0 || state.days > 7)) return false;
+    if (filters.view === 'soon' && (state.kind !== 'open' || state.days === null || state.days < 0 || state.days > 7)) return false;
     if (filters.view === 'new' && !isNew(d, now)) return false;
-    if (filters.view === 'unknown' && state.deadline) return false;
+    if (filters.view === 'unknown' && !['unknown', 'conflict'].includes(state.kind)) return false;
     return true;
   }).sort((a, b) => {
     if (!a.state.deadline) return b.state.deadline ? 1 : 0;
@@ -312,7 +320,11 @@ function filterNotices(data, filters, now = new Date()) {
 }
 // DOM wiring
 const $ = id => document.getElementById(id);
-let kind = 'support', view = 'all', page = 1, searchTimer;
+let kind = 'support', view = 'all', page = 1, searchTimer, refreshTimer;
+const boundaries = DATA.flatMap(d => [instant(d.deadline, true), instant(d.starts_at),
+  ...[d.source_checked_at, d.verified_at].map(value => { const t = instant(value); return t === null ? null : t + 48 * 3600000; })]).filter(t => t !== null);
+const distribution = Object.create(null);
+for (const d of DATA) { const entry = distribution[d.source] ||= { count: 0, latest: '' }; entry.count++; if (d.last_seen > entry.latest) entry.latest = d.last_seen; }
 const expandedKeys = new Set();
 function element(tag, className, text) {
   const el = document.createElement(tag);
@@ -338,8 +350,9 @@ function addDetail(detail, d, query, close) {
   const cell = element('td'); cell.colSpan = 4;
   const heading = element('h2'); highlight(heading, d.title, query); cell.append(heading);
   const dl = element('dl');
-  const fields = [['summary', '요약'], ['target', '신청 대상'], ['specialized_agency', '전담·수요 기관']];
-  if (d.extraction_status === 'ok') fields.push(...EXCERPTS.map(([field, label]) => [field, label + ' 발췌']));
+  const fields = [['target', '신청 대상'], ['specialized_agency', '전담·수요 기관']];
+  if (d.summary_current) fields.unshift(['summary', '요약']);
+  if (d.extraction_status === 'ok' && d.extraction_current) fields.push(...EXCERPTS.map(([field, label]) => [field, label + ' 발췌']));
   let shown = 0;
   for (const [field, label] of fields) {
     if (!d[field]) continue;
@@ -349,10 +362,12 @@ function addDetail(detail, d, query, close) {
   if (!shown) cell.append(element('p', '', '상세 정보가 제공되지 않았습니다. 원문에서 확인해 주세요.'));
   else cell.append(dl);
   const from = safeUrl(d.extracted_from);
-  if (from && d.extraction_status === 'ok') {
+  if (from && d.extraction_status === 'ok' && d.extraction_current) {
     const p = element('p'); const link = element('a', '', '발췌 출처 확인 ↗');
     link.href = from; link.target = '_blank'; link.rel = 'noopener noreferrer'; p.append(link); cell.append(p);
   }
+  cell.append(element('p', '', '출처 응답 확인: ' + displayTime(d.source_checked_at) + ' · 원문 신청기간 확인: ' + displayTime(d.verified_at)));
+  if ((d.summary && !d.summary_current) || (d.extraction_status && !d.extraction_current)) cell.append(element('p', '', '현재 공고와의 일치가 확인되지 않은 요약·발췌는 표시하지 않습니다.'));
   cell.append(element('p', '', '요약과 발췌는 공고 원문의 일부입니다. 신청 전 최신 원문과 자격을 확인하세요.'));
   const button = element('button', 'quiet', '상세 닫기'); button.type = 'button'; button.onclick = close;
   cell.append(button); detail.append(cell);
@@ -376,11 +391,11 @@ function makeRow(d, state, query, index, now) {
     if (matched) { const at = matched.toLowerCase().indexOf(query); const start = Math.max(0, at - 30); const end = Math.min(matched.length, at + query.length + 70); const snippet = element('div', 'match'); highlight(snippet, (start ? '…' : '') + matched.slice(start, end) + (end < matched.length ? '…' : ''), query); titleCell.append(snippet); }
   }
   const status = element('td', 'status-cell'); status.append(element('span', 'badge ' + state.tone, state.label));
-  const deadline = element('td', 'deadline' + (!state.closed && state.days !== null && state.days <= 7 ? ' urgent' : ''));
-  deadline.append(element('strong', '', state.closed ? '마감' : state.days === null ? '마감 미확인' : state.days === 0 ? '오늘 마감' : 'D-' + state.days));
+  const deadline = element('td', 'deadline' + (state.kind === 'open' && state.days !== null && state.days <= 7 ? ' urgent' : ''));
+  deadline.append(element('strong', '', state.closed ? '마감' : ['unknown', 'conflict'].includes(state.kind) ? '마감 확인 필요' : state.days === 0 ? '오늘 마감' : 'D-' + state.days));
   if (state.deadline) {
     const date = state.deadline.date.replace(/-/g, '.');
-    deadline.append(element('small', '', date + (state.deadline.time ? ' · ' + state.deadline.time : '')));
+    deadline.append(element('small', '', (['unknown', 'conflict'].includes(state.kind) ? '저장된 마감 ' : '') + date + (state.deadline.time ? ' · ' + state.deadline.time : '')));
     if (!state.deadline.time) deadline.append(element('small', '', '마감 시각 미제공'));
   } else deadline.append(element('small', '', '원문 확인 필요'));
   const urlCell = element('td', 'link-cell'); const url = safeUrl(d.url);
@@ -410,12 +425,44 @@ function updateChips(filters) {
   host.hidden = host.childElementCount === 0;
   if (!host.hidden) { const reset = element('button', 'reset', '전체 초기화'); reset.type = 'button'; reset.onclick = resetFilters; host.append(reset); }
 }
+const healthLabels = {success: '수집 완료', empty: '정상 응답 0건', partial: '부분 수집', failed: '수집 실패'};
+function displayTime(value, legacy = false) {
+  if (!value) return '기록 없음';
+  const date = new Date(legacy && !/[Z+-]\d*:?\d*$/.test(value.slice(10)) ? value + 'Z' : value);
+  return Number.isNaN(date.getTime()) ? '시각 미확인' : date.toLocaleString('ko-KR', {timeZone: 'Asia/Seoul'});
+}
+function renderHealth(now) {
+  const el = $('dist'); el.textContent = '';
+  for (const [source, name] of Object.entries(SRC)) {
+    const h = HEALTH.find(x => x.source === source);
+    const p = document.createElement('li');
+    if (h) {
+      const checked = instant(h.completed_at);
+      const old = checked === null || now.getTime() < checked || now.getTime() - checked > 48 * 3600000;
+      p.textContent = name + ': ' + (healthLabels[h.state] || '상태 미확인') + (old ? ' · 갱신 지연' : '')
+        + ' · 최근 시도 ' + displayTime(h.completed_at) + ' · ' + h.count + '건'
+        + ' · 마지막 완전 수집 ' + displayTime(h.last_success);
+    } else {
+      const entry = distribution[source];
+      const seen = entry ? entry.latest : '';
+      p.textContent = name + ': 수집 상태 미확인 · 누적 ' + (distribution[source]?.count || 0) + '건'
+        + ' · 과거 저장 기록 ' + displayTime(seen, true);
+    }
+    el.appendChild(p);
+  }
+}
+
 function render() {
   const focused = document.activeElement;
   const focusedRow = focused && focused.closest('#rows tr');
   const focusedKey = focusedRow && focusedRow.dataset.recordKey;
   const focusedAction = focused && focused.matches('.detail button') ? '.detail button' : focused && focused.matches('.detail a') ? '.detail a' : focused && focused.matches('.record a') ? '.record a' : '.title-button';
   const filters = currentFilters(), now = new Date();
+  let nextRefresh = instant(kstDay(now), true);
+  for (const boundary of boundaries) if (boundary >= now.getTime()) nextRefresh = Math.min(nextRefresh, boundary + 50);
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(render, Math.max(50, Math.min(60000, nextRefresh - now.getTime())));
+  renderHealth(now);
   const rows = filterNotices(DATA, filters, now);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE)); page = Math.min(page, pages);
   const from = (page - 1) * PAGE_SIZE;
@@ -434,7 +481,7 @@ function render() {
   $('pagination').hidden = rows.length <= PAGE_SIZE;
   $('page-summary').textContent = `${page} / ${pages} 페이지`;
   $('prev').disabled = page === 1; $('next').disabled = page === pages;
-  const unknownCount = rows.filter(({ state }) => !state.deadline).length;
+  const unknownCount = rows.filter(({ state }) => ['unknown', 'conflict'].includes(state.kind)).length;
   $('unknown').hidden = unknownCount === 0 && view !== 'unknown';
   $('unknown').textContent = view === 'unknown' ? '전체 결과로 돌아가기' : `마감 확인 필요 ${unknownCount.toLocaleString()}건`;
   $('unknown').setAttribute('aria-pressed', String(view === 'unknown'));
@@ -453,12 +500,9 @@ function setup() {
     const option = element('option', '', category); option.value = category; $('cat').append(option);
   }
   for (const [source, label] of Object.entries(SRC)) { const option = element('option', '', label); option.value = source; $('source').append(option); }
-  const distribution = Object.create(null);
-  for (const d of DATA) { const entry = distribution[d.source] ||= { count: 0, latest: '' }; entry.count++; if (d.last_seen > entry.latest) entry.latest = d.last_seen; }
   $('total').textContent = DATA.length.toLocaleString();
   const latest = Object.values(distribution).reduce((max, d) => d.latest > max ? d.latest : max, '');
-  $('updated').textContent = latest ? latest.replace('T', ' ') + ' (저장된 시각)' : '기록 없음';
-  for (const [source, label] of Object.entries(SRC)) { const entry = distribution[source]; $('dist').append(element('li', '', entry ? `${label} ${entry.count.toLocaleString()}건 · 마지막 기록 ${entry.latest.slice(0, 10) || '없음'}` : label + ' · 저장된 공고 없음')); }
+  $('updated').textContent = displayTime(latest, true) + ' (한국 시각)';
   try {
     const saved = JSON.parse(sessionStorage.getItem('gov-dashboard-view') || 'null');
     if (saved) {
@@ -486,16 +530,14 @@ function setup() {
   if (navigation && ['back_forward', 'reload'].includes(navigation.type)) {
     try { const y = Number(sessionStorage.getItem('gov-dashboard-scroll')); if (Number.isFinite(y) && y >= 0) requestAnimationFrame(() => scrollTo(0, y)); } catch {}
   }
-  let clockMinute = Math.floor(Date.now() / 60000);
-  const refreshClock = () => { const minute = Math.floor(Date.now() / 60000); if (!document.hidden && minute !== clockMinute) { clockMinute = minute; render(); } };
-  document.addEventListener('visibilitychange', refreshClock);
-  setInterval(refreshClock, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 }
 try { setup(); } catch (error) { $('load-error').hidden = false; $('count').textContent = '목록을 불러오지 못했습니다'; console.error(error); }
 </script>
 </body>
 </html>
 """
+PAGE = PAGE.replace("__STATUS_JS__", Path(__file__).with_name("status.js").read_text(encoding="utf-8"))
 
 
 def fetch_notices(db_path: str) -> list[dict]:
@@ -509,10 +551,32 @@ def fetch_notices(db_path: str) -> list[dict]:
     return [{k: (row[k] or "") for k in row.keys()} for row in rows]
 
 
-def render_page(notices: list[dict]) -> str:
+def fetch_health(db_path: str) -> list[dict]:
+    conn = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='source_health'").fetchone():
+            return []
+        return [dict(r) for r in conn.execute("SELECT * FROM source_health ORDER BY source")]
+    finally:
+        conn.close()
+
+
+def render_page(notices: list[dict], health: list[dict] | None = None) -> str:
+    notices = [dict(d) for d in notices]
+    for d in notices:
+        rec = NoticeRecord(**{f.name: d.get(f.name, "") for f in fields(NoticeRecord)})
+        basis = content_basis(rec)
+        d["summary_current"] = bool(rec.summary_basis and rec.summary_basis == basis)
+        d["extraction_current"] = bool(rec.extraction_basis and rec.extraction_basis == basis)
+        # 기본값뿐인 이행 필드와 화면에서 쓰지 않는 해시는 HTML 전송에서 제외한다.
+        for key in NEW_COLUMNS:
+            if not d.get(key) or key in ("summary_basis", "extraction_basis"):
+                d.pop(key, None)
     # ensure_ascii=False로 한글 그대로, </ → <\/ 치환해 임베드 스크립트 조기종료 방지.
     data = json.dumps(notices, ensure_ascii=False).replace("</", "<\\/")
-    return PAGE.replace("__DATA__", data)
+    health_json = json.dumps(health or [], ensure_ascii=False).replace("</", "<\\/")
+    return PAGE.replace("__HEALTH__", health_json).replace("__DATA__", data)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -529,7 +593,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path != "/":
             self.send_error(404)
             return
-        html = render_page(fetch_notices(DB_PATH)).encode("utf-8")
+        html = render_page(fetch_notices(DB_PATH), fetch_health(DB_PATH)).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
@@ -541,7 +605,7 @@ def main() -> None:
     # --build <path>: HTTP 서버 대신 정적 HTML 1장을 파일로 써서 종료(Pages 배포용).
     if "--build" in sys.argv:
         out = Path(sys.argv[sys.argv.index("--build") + 1])
-        html = render_page(fetch_notices(DB_PATH))
+        html = render_page(fetch_notices(DB_PATH), fetch_health(DB_PATH))
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(html, encoding="utf-8")
         shutil.copytree(ASSETS, out.parent / "assets", dirs_exist_ok=True)

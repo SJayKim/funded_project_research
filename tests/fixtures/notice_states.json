@@ -1,0 +1,20 @@
+[
+  {"name":"수집일과 무관한 현재 날짜", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-11","last_seen":"2026-11-10T00:00:00"}, "state":"closed"},
+  {"name":"시각 지난 당일", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-12 00:01"}, "state":"closed"},
+  {"name":"종료 상태 우선", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-19","status":"N"}, "state":"closed"},
+  {"name":"시작 전", "now":"2026-11-12T02:00:00Z", "record":{"starts_at":"2026-11-13","deadline":"2026-11-20","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"scheduled"},
+  {"name":"날짜만 있는 마감 당일", "now":"2026-11-12T14:59:59Z", "record":{"deadline":"2026-11-12","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"open"},
+  {"name":"한국 자정", "now":"2026-11-12T15:00:00Z", "record":{"deadline":"2026-11-12","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"closed"},
+  {"name":"정확한 종료 시각", "now":"2026-11-12T03:00:00Z", "record":{"deadline":"2026-11-12 12:00:00","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"closed"},
+  {"name":"날짜 불명", "now":"2026-11-12T02:00:00Z", "record":{"status":"Y","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"unknown"},
+  {"name":"기존 last_seen 검증 승격 금지", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-19","last_seen":"2026-11-12T00:00:00"}, "state":"unknown"},
+  {"name":"48시간 초과", "now":"2026-11-12T02:00:01Z", "record":{"deadline":"2026-11-19","source_checked_at":"2026-11-10T02:00:00Z"}, "state":"unknown"},
+  {"name":"48시간 경계", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-19","source_checked_at":"2026-11-10T02:00:00Z"}, "state":"open"},
+  {"name":"확인 시각이 미래", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-19","source_checked_at":"2026-11-13T00:00:00Z"}, "state":"unknown"},
+  {"name":"잘못된 달력 날짜", "now":"2026-02-20T02:00:00Z", "record":{"deadline":"2026-02-30"}, "state":"conflict"},
+  {"name":"잘못된 시각", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-12 25:61"}, "state":"conflict"},
+  {"name":"원문 충돌", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-19","verification_status":"conflict","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"conflict"},
+  {"name":"윤년", "now":"2028-02-29T02:00:00Z", "record":{"deadline":"2028-02-29","source_checked_at":"2028-02-29T00:00:00Z"}, "state":"open"},
+  {"name":"원문 재확인", "now":"2026-11-12T02:00:00Z", "record":{"deadline":"2026-11-19","verified_at":"2026-11-12T00:00:00Z","verified_deadline":"2026-11-19","verification_status":"confirmed"}, "state":"open"},
+  {"name":"시작 종료 역전", "now":"2026-11-12T02:00:00Z", "record":{"starts_at":"2026-11-20","deadline":"2026-11-19","source_checked_at":"2026-11-12T00:00:00Z"}, "state":"conflict"}
+]

@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import xml.etree.ElementTree as ET
 
-from .base import Adapter, RawNotice, build_url, http_get
+from .base import Adapter, RawNotice, SourceError, build_url, check_api_code, http_get
 
 BASE = "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList"
 
@@ -34,13 +34,19 @@ class MsitAdapter(Adapter):
         self.max_pages = max_pages
 
     def collect(self) -> list[RawNotice]:
-        out: list[RawNotice] = []
+        out = self.begin()
         for page in range(1, self.max_pages + 1):
             url = build_url(BASE, self.service_key,
                             {"pageNo": page, "numOfRows": self.num_rows})
             root = ET.fromstring(http_get(url).decode("utf-8"))
+            check_api_code(root.findtext(".//resultCode"))
+            if root.find(".//body") is None:
+                raise SourceError("schema")
             items = root.findall(".//item")
+            self.add_page([_item_to_dict(it) for it in items], "viewUrl")
             if not items:
+                self.check_total(root.findtext(".//totalCount"))
                 break
-            out += [RawNotice(self.source, _item_to_dict(it)) for it in items]
+        else:
+            self.capped()
         return out

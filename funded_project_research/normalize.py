@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import html
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
 
 from .adapters.base import RawNotice
+from .status import KST
 
 # diff 감시 필드(접수마감·신청상태·첨부 링크)
 WATCH_FIELDS = ("deadline", "status", "attachments")
@@ -39,6 +42,16 @@ class NoticeRecord:
     key_dates: str = ""           # 주요일정 발췌
     extracted_from: str = ""      # 추출 출처 문서
     extraction_status: str = ""   # ""=미시도 / ok / no_info / failed
+    deadline_raw: str = ""
+    starts_at: str = ""
+    published_at: str = ""
+    source_checked_at: str = ""   # API/목록에서 실제 다시 확인한 UTC 시각
+    verified_at: str = ""         # 공식 상세의 구조화된 기간 확인 시각
+    verified_deadline: str = ""
+    verification_status: str = "" # confirmed / conflict
+    summary_basis: str = ""
+    extraction_basis: str = ""
+    extracted_at: str = ""
 
     @property
     def key(self) -> str:
@@ -59,15 +72,28 @@ def parse_deadline(value: str | None) -> str:
     YYYY-MM-DD HH:MM:SS (나라장터 입찰)    -> 그대로
     YYYY-MM-DD HH:MM    (개방표준 결합)    -> 그대로
     """
-    v = (value or "").strip()
+    v = str(value or "").strip()
     if not v:
         return ""
     if re.fullmatch(r"\d{8}", v):
-        return f"{v[0:4]}-{v[4:6]}-{v[6:8]}"
-    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?", v)
-    if m:
-        return f"{m.group(1)} {m.group(2)}" if m.group(2) else m.group(1)
+        v = f"{v[0:4]}-{v[4:6]}-{v[6:8]}"
+    v = re.sub(r"^(\d{4})[./](\d{2})[./](\d{2})", r"\1-\2-\3", v)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?", v):
+        try:
+            if len(v) == 10:
+                return date.fromisoformat(v).isoformat()
+            dt = datetime.fromisoformat(v)
+            if dt.tzinfo:
+                return dt.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S")
+            return dt.isoformat(sep=" ", timespec="seconds" if len(v) > 16 else "minutes")
+        except ValueError:
+            return ""
     return ""
+
+
+def content_basis(rec: NoticeRecord) -> str:
+    values = [getattr(rec, f) for f in ("title", "agency", "target", "deadline", "starts_at", "status", "attachments", "url")]
+    return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
 
 
 def deadline_date(rec: NoticeRecord) -> date | None:
@@ -175,4 +201,19 @@ MAPPERS = {
 
 
 def normalize(raw: RawNotice) -> NoticeRecord:
-    return MAPPERS[raw.source](raw.raw)
+    rec = MAPPERS[raw.source](raw.raw)
+    r = raw.raw
+    values = {
+        "kstartup": (r.get("pbanc_rcpt_end_dt"), r.get("pbanc_rcpt_bgng_dt"), r.get("pbanc_pbanc_dt")),
+        "bizinfo": (_range_end(r.get("reqstBeginEndDe")), (r.get("reqstBeginEndDe") or "").split("~")[0] if "~" in (r.get("reqstBeginEndDe") or "") else "", r.get("creatPnttm")),
+        "msit": ("", "", r.get("pressDt")),
+        "nara": (r.get("bidClseDt"), r.get("bidBeginDt"), r.get("bidNtceDt")),
+        "iris": (r.get("rcveEndDt"), r.get("rcveStrDt"), ""),
+    }
+    end, start, published = values[raw.source]
+    rec.deadline_raw = normalize_text(end)
+    rec.starts_at = parse_deadline(start)
+    rec.published_at = parse_deadline(published)
+    if rec.deadline_raw and not rec.deadline:
+        rec.verification_status = "conflict"
+    return rec

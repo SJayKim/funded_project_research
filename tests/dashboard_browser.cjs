@@ -7,6 +7,17 @@ const path = require('node:path');
 const base = process.argv[2] || 'http://127.0.0.1:48272/';
 const output = path.resolve('.gstack/dashboard-verification');
 mkdirSync(output, { recursive: true });
+function fixtureHTML(notices) {
+  return execFileSync('python3', ['-c', `import json,sys
+from dataclasses import fields
+from funded_project_research.normalize import NoticeRecord, content_basis
+from funded_project_research.serve import render_page
+notices = json.load(sys.stdin)
+for d in notices:
+    basis = content_basis(NoticeRecord(**{f.name: d.get(f.name, '') for f in fields(NoticeRecord)}))
+    d.update(summary_basis=basis, extraction_basis=basis)
+print(render_page(notices))`], { input: JSON.stringify(notices), encoding: 'utf8' });
+}
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
@@ -54,7 +65,8 @@ mkdirSync(output, { recursive: true });
       { key: 'test:xss', source: 'kstartup', title: '<img src=x onerror="window.__xss=1">' + '아주긴한글제목'.repeat(50), deadline: soon, category: '<svg onload="window.__xss=1">', url: 'javascript:window.__xss=1', summary: '</script><script>window.__xss=1</script>', extraction_status: 'ok', required_docs: '서류검색어' },
       { key: 'test:bid', source: 'nara', title: '입찰 검증', deadline: soon, url: 'https://example.com/bid' }
     ];
-    const html = execFileSync('python3', ['-c', 'import json,sys; from funded_project_research.serve import render_page; print(render_page(json.load(sys.stdin)))'], { input: JSON.stringify(fixture), encoding: 'utf8' });
+    for (const d of fixture) d.source_checked_at = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const html = fixtureHTML(fixture);
     const fixtureURL = new URL('browser-fixture', base).href;
     await page.route(fixtureURL, route => route.fulfill({ contentType: 'text/html', body: html }));
     await page.goto(fixtureURL);
@@ -80,7 +92,7 @@ mkdirSync(output, { recursive: true });
     assert.equal(await page.locator('.record').count(), 3);
     await page.locator('#unknown').click();
     assert.equal(await page.locator('.record').count(), 1);
-    assert.match(await page.locator('.deadline').innerText(), /마감 미확인/);
+    assert.match(await page.locator('.deadline').innerText(), /마감 확인 필요/);
     assert.equal(await page.locator('.link').count(), 0);
     await page.locator('#unknown').click();
     await page.locator('#filter-toggle').click();
@@ -102,8 +114,34 @@ mkdirSync(output, { recursive: true });
     await page.locator('#q').fill('가'.repeat(100));
     await page.locator('#empty').waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+    // Exercise actual scheduled renders across Korean midnight, explicit deadlines,
+    // application starts and the 48-hour freshness boundary in a non-Korean browser.
+    const clockData = [
+      { key: 'clock:day', source: 'kstartup', title: '날짜 마감', deadline: '2026-11-12', source_checked_at: '2026-11-12T14:00:00Z' },
+      { key: 'clock:time', source: 'kstartup', title: '시각 마감', deadline: '2026-11-12 23:59:59', source_checked_at: '2026-11-12T14:00:00Z' },
+      { key: 'clock:start', source: 'kstartup', title: '접수 시작', deadline: '2026-11-14', starts_at: '2026-11-13 00:00:00', source_checked_at: '2026-11-12T14:00:00Z' },
+      { key: 'clock:stale', source: 'kstartup', title: '확인 만료', deadline: '2026-11-14', source_checked_at: '2026-11-10T15:00:00Z' }
+    ];
+    const clockURL = new URL('clock-fixture', base).href;
+    await page.route(clockURL, route => route.fulfill({ contentType: 'text/html', body: fixtureHTML(clockData) }));
+    await page.clock.install({ time: new Date('2026-11-12T14:59:58Z') });
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(clockURL);
+    await page.locator('[data-view="soon"]').click();
+    const keys = () => page.locator('.record').evaluateAll(rows => rows.map(row => row.dataset.recordKey));
+    assert.deepEqual(await keys(), ['clock:time', 'clock:day', 'clock:stale']);
+    await page.clock.fastForward(2500);
+    assert.deepEqual(await keys(), ['clock:start']);
+    await page.evaluate(() => {
+      HEALTH.push({ source: 'kstartup', state: 'failed', completed_at: '2026-11-12T14:00:00Z', count: 0, last_success: '' });
+      render();
+    });
+    await page.locator('#health-toggle').click();
+    assert.match(await page.locator('#dist').innerText(), /K-Startup: 수집 실패/);
+    assert.match(await page.locator('#dist').innerText(), /IRIS: 수집 상태 미확인/);
     assert.deepEqual(errors, []);
-    const report = { actualDataResult: real, widths, browser: 'Chromium', browserTimezone: 'America/Los_Angeles', checks: ['pagination', 'detail and clock refresh', 'focus and Escape', 'bid view', 'search snippets', 'empty and reset', 'unknown deadline', 'closed status', 'source filter', 'session restore', 'cards', 'long titles', 'untrusted text and links', 'local font'], pageErrors: errors };
+    const report = { actualDataResult: real, widths, browser: 'Chromium', browserTimezone: 'America/Los_Angeles', checks: ['pagination', 'detail and clock refresh', 'focus and Escape', 'bid view', 'search snippets', 'empty and reset', 'unknown deadline', 'closed status', 'source filter', 'session restore', 'cards', 'long titles', 'untrusted text and links', 'local font', 'automatic deadline/start/freshness transitions', 'source health'], pageErrors: errors };
     writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } finally { await browser.close(); }

@@ -23,13 +23,14 @@ def _prompt(rec: NoticeRecord) -> str:
         f"공고명: {rec.title}\n"
         f"소관부처: {rec.agency}\n"
         f"신청대상: {rec.target or '미상'}\n"
-        f"접수마감: {rec.deadline or '상시/미상'}"
+        f"접수마감: {rec.deadline or '미확인'}"
     )
 
 
 def _fallback(rec: NoticeRecord) -> str:
     cat = rec.category or "기술"
-    return f"{rec.agency} {cat} 분야 지원사업 (마감 {rec.deadline or '상시'})"
+    kind = "용역 입찰" if rec.source == "nara" else "공고"
+    return f"{rec.agency} · {cat} · {kind} (마감 {rec.deadline or '미확인'})"
 
 
 def _anthropic_message(prompt: str, api_key: str) -> str:

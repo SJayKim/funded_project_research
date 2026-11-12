@@ -9,7 +9,20 @@ on:
         description: "첫 실행: 메일 발송 없이 DB만 시딩(폭주 방지)"
         type: boolean
         default: false
+      initialize_db:
+        description: "최초 설치만: data 브랜치가 없을 때 빈 DB 생성(메일 자동 생략)"
+        type: boolean
+        default: false
+      recheck_only:
+        description: "수집/발송 없이 공식 원문 재확인과 대시보드 배포"
+        type: boolean
+        default: false
+      health_only:
+        description: "출처 접근 상태와 원문만 점검 (공고 수집 적재·알림·LLM 생략)"
+        type: boolean
+        default: false
 
+# 예약/수동/브랜치 실행 모두 같은 DB를 쓰므로 하나의 그룹에서 직렬화한다.
 concurrency:
   group: collect-data-pages
   cancel-in-progress: false
@@ -31,14 +44,40 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
-      # data 브랜치에서 직전 SQLite 스냅샷 복원(없으면 첫 실행 = 빈 DB).
+      - name: Run offline tests
+        env:
+          ANTHROPIC_API_KEY: ""
+          RUN_LIVE_EVAL: "0"
+        run: python -m unittest discover -s tests -v
+
+      # 원격 오류와 브랜치 부재를 구분한다. 검증/백업 실패 시 이후 단계는 실행하지 않는다.
       - name: Restore DB from data branch
+        id: restore
+        env:
+          INITIALIZE_DB: ${{ inputs.initialize_db }}
         run: |
-          git fetch origin data || true
-          git show origin/data:gov_notices.db > gov_notices.db || rm -f gov_notices.db
+          args=()
+          if [[ "$INITIALIZE_DB" == "true" ]]; then
+            args+=(--initialize)
+          fi
+          python -m scripts.ci_db restore --backup-dir "$RUNNER_TEMP/db-baseline" "${args[@]}"
+
+      - name: Preserve DB baseline before collection
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/db-baseline/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Run collector
+        id: collector
+        if: ${{ !inputs.recheck_only }}
+        continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
@@ -55,24 +94,54 @@ jobs:
           # 모델 오버라이드(미설정 시 코드 기본값: 요약=Haiku, 추출=Sonnet).
           SUMMARIZE_MODEL: ${{ secrets.SUMMARIZE_MODEL }}
           EXTRACT_MODEL: ${{ secrets.EXTRACT_MODEL }}
-        run: python -m funded_project_research.collect ${{ inputs.no_notify && '--no-notify' || '' }}
+          NO_NOTIFY: ${{ inputs.no_notify || steps.restore.outputs.initialized == 'true' }}
+          HEALTH_ONLY: ${{ inputs.health_only }}
+        run: |
+          args=()
+          if [[ "$NO_NOTIFY" == "true" ]]; then
+            args+=(--no-notify)
+          fi
+          if [[ "$HEALTH_ONLY" == "true" ]]; then
+            args+=(--health-only)
+          fi
+          python -m funded_project_research.collect "${args[@]}"
+
+      - name: Recheck structured official application periods without email
+        run: python -m funded_project_research.recheck --apply --limit 20 --report recheck-report.json
+
+      - name: Preserve recheck evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recheck-${{ github.run_id }}-${{ github.run_attempt }}
+          path: recheck-report.json
+          retention-days: 30
+
+      - name: Validate collected DB before persistence and deployment
+        run: python -m scripts.ci_db validate
 
       # 갱신된 DB를 data 브랜치에 커밋(main 이력 오염 방지).
       - name: Commit DB to data branch
+        env:
+          INITIALIZED: ${{ steps.restore.outputs.initialized }}
+          DATA_SHA: ${{ steps.restore.outputs.data_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
-            git worktree add -B data data-wt origin/data
-          else
+          if [[ "$INITIALIZED" == "true" ]]; then
             git worktree add --detach data-wt
-            ( cd data-wt && git checkout --orphan data && git rm -rf . >/dev/null 2>&1 || true )
+            ( cd data-wt && git checkout --orphan data && git rm -rf --ignore-unmatch . )
+          else
+            git worktree add --detach data-wt "$DATA_SHA"
           fi
           cp gov_notices.db data-wt/gov_notices.db
           cd data-wt
           git add gov_notices.db
-          git commit -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "no changes"
-          git push origin data
+          if git diff --cached --quiet; then
+            echo "DB unchanged"
+          else
+            git commit -m "data: snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+          git push origin HEAD:refs/heads/data
 
       - name: Build static dashboard
         run: |
@@ -87,3 +156,9 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Report source or collection failure after publishing status
+        if: steps.collector.outcome == 'failure'
+        run: |
+          echo "수집 오류가 있습니다. 보존된 데이터와 출처 상태를 배포했으며 이 실행은 실패로 표시합니다."
+          exit 1

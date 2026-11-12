@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'funded_project_research/serve.py'
+      - 'funded_project_research/status.js'
+      - 'funded_project_research/normalize.py'
+      - 'funded_project_research/store.py'
       - 'funded_project_research/assets/**'
       - '.github/workflows/dashboard.yml'
       - 'tests/**'
