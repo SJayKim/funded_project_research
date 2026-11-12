@@ -14,7 +14,7 @@ function instant(value, end = false) {
   const result = new Date(text).getTime();
   return Number.isFinite(result) ? result + (end && value.length === 10 ? 86400000 : 0) : null;
 }
-function noticeState(d, now = new Date()) {
+function reliabilityState(d, now = new Date()) {
   const close = instant(d.deadline, true), begin = instant(d.starts_at), ts = now.getTime();
   if (d.status === 'N') return 'closed';
   if ((d.deadline && close === null) || (d.starts_at && begin === null)) return 'conflict';
@@ -31,4 +31,4 @@ function noticeState(d, now = new Date()) {
   if (begin !== null && ts < begin) return 'scheduled';
   return 'open';
 }
-if (typeof module !== 'undefined') module.exports = {noticeState, kstDay, instant};
+if (typeof module !== 'undefined') module.exports = {noticeState: reliabilityState, kstDay, instant};

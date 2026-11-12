@@ -148,6 +148,33 @@ class TestCollectionHealth(unittest.TestCase):
             with closing(sqlite3.connect(db)) as conn:
                 self.assertEqual(conn.execute("SELECT state FROM source_health").fetchone()[0], "failed")
 
+    def test_health_only_preserves_notices_and_alerts_without_mail_or_llm(self):
+        from funded_project_research.adapters.base import RawNotice
+        class Accessible:
+            source = "kstartup"
+            def collect(self):
+                return [RawNotice(self.source, {"pbanc_sn": 2})]
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "data.db"
+            store = Store(str(db))
+            rec = NoticeRecord("kstartup", "1", "기존 공고", "u")
+            store.upsert(rec, "2026-11-01T00:00:00Z")
+            store.mark_alert(rec.key, "new")
+            store.commit()
+            before = tuple(store.conn.execute("SELECT * FROM notices").fetchone())
+            store.close()
+            with patch.object(collect, "ADAPTERS", [Accessible]), \
+                 patch.object(collect, "Store", lambda: Store(str(db))), \
+                 patch.object(collect, "run") as run, patch.object(collect, "enrich") as enrich, \
+                 patch("sys.argv", ["collect", "--health-only"]):
+                collect.main()
+                run.assert_not_called()
+                enrich.assert_not_called()
+            with closing(sqlite3.connect(db)) as conn:
+                self.assertEqual(conn.execute("SELECT * FROM notices").fetchall(), [before])
+                self.assertEqual(conn.execute("SELECT * FROM alerts").fetchall(), [(rec.key, "new")])
+                self.assertEqual(conn.execute("SELECT state,count FROM source_health").fetchone(), ("success", 1))
+
 
 class TestDerivedInformation(unittest.TestCase):
     def test_changed_deadline_invalidates_summary_and_excerpt(self):

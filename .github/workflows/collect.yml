@@ -17,6 +17,10 @@ on:
         description: "수집/발송 없이 공식 원문 재확인과 대시보드 배포"
         type: boolean
         default: false
+      health_only:
+        description: "출처 접근 상태와 원문만 점검 (공고 수집 적재·알림·LLM 생략)"
+        type: boolean
+        default: false
 
 # 예약/수동/브랜치 실행 모두 같은 DB를 쓰므로 하나의 그룹에서 직렬화한다.
 concurrency:
@@ -91,10 +95,14 @@ jobs:
           SUMMARIZE_MODEL: ${{ secrets.SUMMARIZE_MODEL }}
           EXTRACT_MODEL: ${{ secrets.EXTRACT_MODEL }}
           NO_NOTIFY: ${{ inputs.no_notify || steps.restore.outputs.initialized == 'true' }}
+          HEALTH_ONLY: ${{ inputs.health_only }}
         run: |
           args=()
           if [[ "$NO_NOTIFY" == "true" ]]; then
             args+=(--no-notify)
+          fi
+          if [[ "$HEALTH_ONLY" == "true" ]]; then
+            args+=(--health-only)
           fi
           python -m funded_project_research.collect "${args[@]}"
 

@@ -206,6 +206,14 @@ def main() -> None:
     send = "--no-notify" not in sys.argv
     store = Store()
     raws = collect_all(store)
+    if "--health-only" in sys.argv:
+        # 운영 접근 점검만 수행한다. 시딩과 달리 공고·알림 이력을 갱신하지 않는다.
+        unhealthy = any(s["state"] in ("partial", "failed") for s in store.source_health())
+        store.close()
+        print(f"출처 점검 {len(raws)}건 응답 | 공고·알림 이력 변경 없음 | 메일·LLM 호출 없음")
+        if unhealthy:
+            raise SystemExit(2)
+        return
     current = dedupe([normalize(r) for r in raws])
     summary = run(store, current, datetime.now(KST), send=send)
     # base 스냅샷 확정 후 2단계 추출(별도 트랜잭션. 터져도 일일 스냅샷·메일 안전).

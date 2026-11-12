@@ -117,6 +117,35 @@ python -m funded_project_research.recheck --db gov_notices.db --limit 20 --apply
 필요합니다(Python/화면 날짜 규칙의 공통 fixture 실행). [실행안](docs/planning/reliability-release-2026-11-12.md)과
 [검증 인계](docs/sessions/reliability-2026-11-12.md)에 범위·미완료 항목을 기록합니다.
 
+출처의 운영 접근 상태만 확인하려면 `python -m funded_project_research.collect --health-only`를
+사용합니다. 출처 상태만 저장하고 공고·알림 이력을 유지하며 메일·LLM을 호출하지 않습니다.
+수동 workflow의 `health_only=true`는 이 점검 후 원문 재확인과 배포까지 진행합니다.
+`recheck_only`와 함께 선택하면 원문 재확인만 실행합니다.
+
+## 대시보드 화면과 배포
+
+지원·사업 공고와 입찰을 구분하고 제목·기관·요약·검증된 발췌를 검색합니다.
+분야·출처·마감 포함 필터, 표/카드 보기, 목록 안 상세 펼침을 제공하며 결과는
+가까운 마감순으로 50건씩 표시합니다. 마감 정보가 없으면 `마감 확인 필요`로
+남기고 접수중을 추정하지 않습니다. D-day는 브라우저의 한국 현재 시각 기준입니다.
+
+정적 빌드는 `site/index.html`과 `site/assets/`를 함께 생성합니다. Pretendard
+v1.3.9는 로컬 폰트 파일로 제공하며 배포 라이선스는
+`funded_project_research/assets/pretendard/LICENSE.txt`에 포함합니다.
+
+`dashboard` workflow는 화면 변경을 main에 반영하거나 수동 실행할 때 기존
+data 브랜치의 DB를 읽어 Pages만 갱신합니다. 수집·메일 발송·DB 저장은 실행하지
+않습니다. 예약 수집 workflow와 같은 실행 그룹을 사용해 배포가 겹치지 않게 합니다.
+
+브라우저 날짜·필터·링크 규칙 테스트는 Node가 있으면 기본 unittest에서 함께
+실행하며 CI에는 Node를 설치합니다. Playwright가 설치된 환경에서는 로컬 정적
+서버를 띄운 뒤 `node tests/dashboard_browser.cjs http://127.0.0.1:48272/`로
+실제 화면·검색·키보드·작은 화면·안전한 텍스트 렌더링도 검사할 수 있습니다.
+기록과 스크린샷은 `.gstack/dashboard-verification/`에 저장됩니다.
+
+HTML에는 아직 전체 공고 데이터가 포함됩니다. 50건씩 표시하는 것은 DOM 크기를
+제한하는 조치이며 초기 다운로드 용량 분할은 별도 후속 작업입니다.
+
 ## 환경변수
 
 필수 또는 선택 환경변수는 다음과 같습니다.

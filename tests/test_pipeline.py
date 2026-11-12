@@ -787,7 +787,7 @@ class TestServe(unittest.TestCase):
             html = serve.render_page(notices)
             self.assertIn("AI 한글 공고", html)        # 한글 임베드
             self.assertIn("<\\/script>", html)         # </ → <\/ 치환
-            self.assertIn("기술 전체", html)            # 기본 tech 필터 마커
+            self.assertIn("기술 전체", html)            # 기존 tech 필터 선택지 유지
         finally:
             os.unlink(path)
 
@@ -812,12 +812,13 @@ class TestServe(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_hide_closed_controls_present(self):  # (b) 마감 숨김 체크박스 + 진행중 부제 + 필터 술어
+    def test_accessible_filters_present(self):
         page = serve.PAGE
-        self.assertIn('id="hideClosed"', page)                       # 마감 숨김 체크박스
-        self.assertIn('id="openTotal"', page)                        # 진행중 카운트 슬롯
-        self.assertIn('확인된 마감 전', page)
-        self.assertIn("hideClosed && state === 'closed'", page)
+        self.assertIn('id="hideClosed"', page)
+        self.assertIn('마감된 공고 숨기기', page)
+        self.assertIn('aria-live="polite"', page)
+        self.assertIn('aria-label="공고 검색"', page)
+
 
 
 class TestCollectIsolation(unittest.TestCase):
