@@ -3,6 +3,7 @@ name: collect
 on:
   schedule:
     - cron: "0 0 * * *"   # 매일 00:00 UTC = 09:00 KST.
+    - cron: "17 3,9,15,21 * * *" # KST 12:17/18:17/00:17/06:17: 발송 없는 신뢰성 점검.
   workflow_dispatch:
     inputs:
       no_notify:
@@ -35,6 +36,10 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      # 새 주기가 추가돼도 기존 09:00 KST 수집 외의 예약 실행에는 메일 권한을 주지 않는다.
+      HEALTH_ONLY: ${{ inputs.health_only || (github.event_name == 'schedule' && github.event.schedule != '0 0 * * *') }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -76,7 +81,7 @@ jobs:
 
       - name: Run collector
         id: collector
-        if: ${{ !inputs.recheck_only }}
+        if: ${{ !inputs.recheck_only && env.HEALTH_ONLY != 'true' }}
         continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
@@ -95,25 +100,42 @@ jobs:
           SUMMARIZE_MODEL: ${{ secrets.SUMMARIZE_MODEL }}
           EXTRACT_MODEL: ${{ secrets.EXTRACT_MODEL }}
           NO_NOTIFY: ${{ inputs.no_notify || steps.restore.outputs.initialized == 'true' }}
-          HEALTH_ONLY: ${{ inputs.health_only }}
         run: |
           args=()
           if [[ "$NO_NOTIFY" == "true" ]]; then
             args+=(--no-notify)
           fi
-          if [[ "$HEALTH_ONLY" == "true" ]]; then
-            args+=(--health-only)
-          fi
           python -m funded_project_research.collect "${args[@]}"
 
+      - name: Check sources without mail or model credentials
+        id: source_check
+        if: ${{ !inputs.recheck_only && env.HEALTH_ONLY == 'true' }}
+        continue-on-error: true
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
+          LLM_ENABLED: "off"
+        run: python -m funded_project_research.collect --health-only
+
       - name: Recheck structured official application periods without email
-        run: python -m funded_project_research.recheck --apply --limit 20 --report recheck-report.json
+        id: recheck
+        continue-on-error: true
+        timeout-minutes: 20
+        run: python -m funded_project_research.recheck --apply --limit 100 --report recheck-report.json
+
+      - name: Audit all records and persist reliability report
+        id: reliability
+        continue-on-error: true
+        run: python -m funded_project_research.reliability --record --recheck-report recheck-report.json --report reliability-report.json
 
       - name: Preserve recheck evidence
         uses: actions/upload-artifact@v4
         with:
           name: recheck-${{ github.run_id }}-${{ github.run_attempt }}
-          path: recheck-report.json
+          path: |
+            recheck-report.json
+            reliability-report.json
+          if-no-files-found: error
           retention-days: 30
 
       - name: Validate collected DB before persistence and deployment
@@ -157,8 +179,11 @@ jobs:
         id: deploy
         uses: actions/deploy-pages@v4
 
-      - name: Report source or collection failure after publishing status
-        if: steps.collector.outcome == 'failure'
+      - name: Verify published report and dashboard bytes
+        run: python -m scripts.check_published --url https://sjaykim.github.io/funded_project_research/reliability.json --expected site/reliability.json --html site/index.html
+
+      - name: Report reliability failure after publishing evidence
+        if: ${{ steps.collector.outcome == 'failure' || steps.source_check.outcome == 'failure' || steps.recheck.outcome == 'failure' || steps.reliability.outcome == 'failure' }}
         run: |
-          echo "수집 오류가 있습니다. 보존된 데이터와 출처 상태를 배포했으며 이 실행은 실패로 표시합니다."
+          echo "수집·원문 재확인·신뢰성 검사에 문제가 있습니다. 데이터와 점검 근거를 보존했으며 이 실행은 실패로 표시합니다."
           exit 1

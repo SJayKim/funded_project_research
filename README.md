@@ -112,7 +112,7 @@ python -m funded_project_research.recheck --db gov_notices.db --limit 20 --repor
 python -m funded_project_research.recheck --db gov_notices.db --limit 20 --apply --report applied.json
 ```
 
-정기 수집은 원문 20건을 함께 재확인합니다. 수동 workflow의 `recheck_only=true`는 수집과
+정기 수집은 순환 대상의 원문 최대 100건을 함께 재확인합니다. 수동 workflow의 `recheck_only=true`는 수집과
 발송을 생략하고 재확인·DB 저장·대시보드 배포만 실행합니다. 단위 테스트에는 Node.js가
 필요합니다(Python/화면 날짜 규칙의 공통 fixture 실행). [실행안](docs/planning/reliability-release-2026-11-12.md)과
 [검증 인계](docs/sessions/reliability-2026-11-12.md)에 범위·미완료 항목을 기록합니다.
@@ -121,6 +121,28 @@ python -m funded_project_research.recheck --db gov_notices.db --limit 20 --apply
 사용합니다. 출처 상태만 저장하고 공고·알림 이력을 유지하며 메일·LLM을 호출하지 않습니다.
 수동 workflow의 `health_only=true`는 이 점검 후 원문 재확인과 배포까지 진행합니다.
 `recheck_only`와 함께 선택하면 원문 재확인만 실행합니다.
+
+## 자동 신뢰성 점검
+
+매일 09:00 KST 수집 후 검사에 더해, 00:17·06:17·12:17·18:17 KST에 출처와 원문을 점검합니다.
+추가 점검은 공고 신규 적재·알림 이력 변경·메일·LLM 호출을 하지 않습니다. 원문 기간과
+검증 이력은 근거가 확인될 때 갱신합니다. 원문은 기업마당·K-Startup의 최대 100건을
+순환 점검하며, 전체 DB의 날짜·확인 시각·식별자·원문 링크 형식도 검사합니다.
+
+`reliability-watch`는 매시간 43분에 공개 점검 기록을 읽고, 8시간 넘게 갱신되지 않으면
+실패로 표시합니다. 대시보드에도 마지막 검사 시각·미확인 건수·점검 지연이 표시됩니다.
+매 배포 뒤에는 공개 점검 JSON과 HTML 바이트가 빌드 결과와 일치하는지 검사합니다.
+판정과 근거는 DB의 `reliability_checks`, Actions 요약, 30일 보관 artifact에서 확인합니다.
+Actions의 개인 알림 수신 설정은 변경하지 않습니다.
+
+```sh
+# 같은 점검을 메일 없이 수동 실행 (data 초기화 금지)
+gh workflow run collect.yml -f health_only=true -f no_notify=true
+# 점검 누락 감시만 실행
+gh workflow run reliability-watch.yml
+```
+
+점검 빈도·순환 규칙·실패 처리와 한계는 [주기적 점검 인계](docs/impl-notes/2026-11-12-periodic-reliability.md)에 기록합니다.
 
 ## 대시보드 화면과 배포
 

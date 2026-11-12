@@ -8,6 +8,7 @@ on:
       - 'funded_project_research/status.js'
       - 'funded_project_research/normalize.py'
       - 'funded_project_research/store.py'
+      - 'funded_project_research/reliability.py'
       - 'funded_project_research/assets/**'
       - '.github/workflows/dashboard.yml'
       - 'tests/**'
@@ -85,3 +86,5 @@ jobs:
           path: site
       - uses: actions/deploy-pages@v4
         id: deploy
+      - name: Verify published report and dashboard bytes
+        run: python -m scripts.check_published --url https://sjaykim.github.io/funded_project_research/reliability.json --expected site/reliability.json --html site/index.html

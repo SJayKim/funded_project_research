@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const code = readFileSync(require('node:path').join(__dirname, '../funded_project_research/serve.py'), 'utf8')
-  .split('<script>')[1].split('// DOM wiring')[0].replace('__DATA__', '[]').replace('__HEALTH__', '[]')
+  .split('<script>')[1].split('// DOM wiring')[0].replace('__DATA__', '[]').replace('__HEALTH__', '[]').replace('__AUDIT__', 'null')
   .replace('__STATUS_JS__', readFileSync(require('node:path').join(__dirname, '../funded_project_research/status.js'), 'utf8'));
 const context = vm.createContext({ Date, URL });
 vm.runInContext(code, context);

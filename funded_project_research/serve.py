@@ -15,6 +15,7 @@ import sqlite3
 import sys
 
 from .normalize import NoticeRecord, content_basis
+from .reliability import latest_report
 from .store import NEW_COLUMNS
 
 DB_PATH = os.environ.get("GOV_DB", "gov_notices.db")
@@ -235,7 +236,8 @@ mark { background: #fff0b3; color: var(--ink); padding: 0 1px; }
 <header class="topbar"><div class="top-inner"><div class="wordmark">정부과제<span>공고 탐색</span></div><div class="updated">공식 출처의 공고를 한곳에서</div></div></header>
 <main>
 <section class="intro"><div><h1>정부과제 찾기</h1><p>지원사업·연구개발 공고를 찾고 원문을 확인하세요.</p></div><button type="button" class="quiet" id="health-toggle" aria-controls="health" aria-expanded="false">수집 정보</button></section>
-<section class="notice" id="health" hidden aria-label="수집 정보"><h2>저장된 공고 정보</h2><p>전체 <strong id="total"></strong>건 · 마지막 수집 기록 <strong id="updated"></strong></p><ul id="dist"></ul><p>마감 전 표시는 최근 48시간 안에 확인한 신청기간 기준입니다. 확인이 오래되거나 정보가 상충하면 재확인이 필요합니다. 수집 완료도 신청자격을 보장하지 않습니다.</p></section>
+<p class="notice" id="check-status" role="status" aria-live="polite"></p>
+<section class="notice" id="health" hidden aria-label="수집 정보"><h2>저장된 공고 정보</h2><p>전체 <strong id="total"></strong>건 · 마지막 수집 기록 <strong id="updated"></strong></p><ul id="dist"></ul><p id="check-detail"></p><p>마감 전 표시는 최근 48시간 안에 확인한 신청기간 기준입니다. 확인이 오래되거나 정보가 상충하면 재확인이 필요합니다. 수집 완료도 신청자격을 보장하지 않습니다.</p></section>
 <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="q" type="search" placeholder="공고명, 기관, 관심 분야를 검색하세요" aria-label="공고 검색" autocomplete="off"></div>
 <nav class="tabs" aria-label="공고 종류"><button type="button" data-kind="support" aria-pressed="true">지원·사업 공고</button><button type="button" data-kind="bid" aria-pressed="false">입찰</button><button type="button" data-kind="all" aria-pressed="false">전체</button></nav>
 <div class="tools"><div class="views" id="view" role="group" aria-label="빠른 필터"><button type="button" data-view="all" aria-pressed="true">전체</button><button type="button" data-view="soon" aria-pressed="false">7일 내 마감</button><button type="button" data-view="new" aria-pressed="false">새로 수집</button></div><div class="tools-right"><select id="sort" aria-label="정렬"><option value="near">가까운 마감순</option><option value="far">먼 마감순</option></select><button type="button" class="quiet" id="filter-toggle" aria-controls="filters" aria-expanded="false">상세 필터</button></div></div>
@@ -251,6 +253,7 @@ mark { background: #fff0b3; color: var(--ink); padding: 0 1px; }
 <script>
 const DATA = __DATA__;
 const HEALTH = __HEALTH__;
+const AUDIT = __AUDIT__;
 __STATUS_JS__
 const SRC = { kstartup: 'K-Startup', bizinfo: '기업마당', msit: '과기정통부', nara: '나라장터', iris: 'IRIS' };
 const EXCERPTS = [['funding_amount', '지원금액'], ['eligibility', '신청자격'], ['required_docs', '제출서류'], ['key_dates', '주요일정']];
@@ -323,6 +326,7 @@ const $ = id => document.getElementById(id);
 let kind = 'support', view = 'all', page = 1, searchTimer, refreshTimer;
 const boundaries = DATA.flatMap(d => [instant(d.deadline, true), instant(d.starts_at),
   ...[d.source_checked_at, d.verified_at].map(value => { const t = instant(value); return t === null ? null : t + 48 * 3600000; })]).filter(t => t !== null);
+if (instant(AUDIT?.checked_at) !== null) boundaries.push(instant(AUDIT.checked_at) + 8 * 3600000);
 const distribution = Object.create(null);
 for (const d of DATA) { const entry = distribution[d.source] ||= { count: 0, latest: '' }; entry.count++; if (d.last_seen > entry.latest) entry.latest = d.last_seen; }
 const expandedKeys = new Set();
@@ -432,6 +436,14 @@ function displayTime(value, legacy = false) {
   return Number.isNaN(date.getTime()) ? '시각 미확인' : date.toLocaleString('ko-KR', {timeZone: 'Asia/Seoul'});
 }
 function renderHealth(now) {
+  const checked = instant(AUDIT?.checked_at);
+  const overdue = checked === null || now.getTime() < checked || now.getTime() - checked > 8 * 3600000;
+  $('check-status').textContent = overdue ? '자동 점검 확인 필요 · ' + (checked === null ? '완료 기록 없음' : '최근 점검 후 8시간 경과')
+    : '최근 자동 점검 ' + displayTime(AUDIT.checked_at) + ' · ' + (AUDIT.status === 'ok' ? '설정된 검사 통과' : '재확인 필요 ' + AUDIT.issues.length + '개 항목')
+      + ' · 날짜·형식 검사 ' + AUDIT.counts.total.toLocaleString() + '건 / 원문 ' + AUDIT.official.confirmed + '건 확인';
+  $('check-detail').textContent = AUDIT ? '기업마당·K-Startup의 진행 중·상태 미확인 공고: 최근 24시간 원문 신청기간 확인 '
+    + (AUDIT.counts.official_fresh || 0).toLocaleString() + '/' + (AUDIT.counts.supported_active || 0).toLocaleString() + '건 · 14일 내 마감 중 원문 미확인 '
+    + (AUDIT.counts.near_deadline_unverified || 0).toLocaleString() + '건 · 이번 원문 조회 미확인 ' + AUDIT.official.unconfirmed + '건' : '';
   const el = $('dist'); el.textContent = '';
   for (const [source, name] of Object.entries(SRC)) {
     const h = HEALTH.find(x => x.source === source);
@@ -562,7 +574,7 @@ def fetch_health(db_path: str) -> list[dict]:
         conn.close()
 
 
-def render_page(notices: list[dict], health: list[dict] | None = None) -> str:
+def render_page(notices: list[dict], health: list[dict] | None = None, audit: dict | None = None) -> str:
     notices = [dict(d) for d in notices]
     for d in notices:
         rec = NoticeRecord(**{f.name: d.get(f.name, "") for f in fields(NoticeRecord)})
@@ -576,7 +588,8 @@ def render_page(notices: list[dict], health: list[dict] | None = None) -> str:
     # ensure_ascii=False로 한글 그대로, </ → <\/ 치환해 임베드 스크립트 조기종료 방지.
     data = json.dumps(notices, ensure_ascii=False).replace("</", "<\\/")
     health_json = json.dumps(health or [], ensure_ascii=False).replace("</", "<\\/")
-    return PAGE.replace("__HEALTH__", health_json).replace("__DATA__", data)
+    audit_json = json.dumps(audit, ensure_ascii=False).replace("</", "<\\/")
+    return PAGE.replace("__AUDIT__", audit_json).replace("__HEALTH__", health_json).replace("__DATA__", data)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -593,7 +606,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path != "/":
             self.send_error(404)
             return
-        html = render_page(fetch_notices(DB_PATH), fetch_health(DB_PATH)).encode("utf-8")
+        html = render_page(fetch_notices(DB_PATH), fetch_health(DB_PATH), latest_report(Path(DB_PATH))).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
@@ -605,9 +618,11 @@ def main() -> None:
     # --build <path>: HTTP 서버 대신 정적 HTML 1장을 파일로 써서 종료(Pages 배포용).
     if "--build" in sys.argv:
         out = Path(sys.argv[sys.argv.index("--build") + 1])
-        html = render_page(fetch_notices(DB_PATH), fetch_health(DB_PATH))
+        audit = latest_report(Path(DB_PATH))
+        html = render_page(fetch_notices(DB_PATH), fetch_health(DB_PATH), audit)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(html, encoding="utf-8")
+        (out.parent / "reliability.json").write_text(json.dumps(audit, ensure_ascii=False) + "\n", encoding="utf-8")
         shutil.copytree(ASSETS, out.parent / "assets", dirs_exist_ok=True)
         print(f"wrote {out} ({len(html.encode('utf-8'))} bytes) and assets/")
         return

@@ -7,17 +7,52 @@ import json
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .adapters.base import http_get
 from .extract import html_to_text
 from .normalize import NoticeRecord, content_basis, normalize_text, parse_deadline
-from .status import KST, notice_state, utc_now
+from .status import KST, as_kst, instant, notice_state, utc_now
 from .store import Store
 
 KNOWN_KEYS = ("bizinfo:PBLN_000000000105965", "kstartup:179430", "kstartup:175817")
+RECHECK_HOURS = 24
+RETRY_HOURS = 6
+
+
+def select_candidates(records: dict, attempts: dict, now: datetime, limit: int) -> tuple[list, int]:
+    """임박/기술 공고 3/4, 나머지 1/4. 실패 시각도 저장해 같은 앞부분의 독점을 막는다."""
+    now = as_kst(now)
+    priority, other = [], []
+    for rec in records.values():
+        if rec.source not in ("bizinfo", "kstartup"):
+            continue
+        closed = notice_state(rec, now, require_fresh=False) == "closed"
+        if closed and rec.key not in KNOWN_KEYS:
+            continue
+        verified = instant(rec.verified_at) if rec.verification_status == "confirmed" and rec.verified_deadline == rec.deadline else None
+        interval = timedelta(days=7) if closed else timedelta(hours=RECHECK_HOURS)
+        if verified and timedelta(0) <= now - verified < interval:
+            continue
+        attempted = instant(attempts.get(rec.key, {}).get("checked_at", ""))
+        if attempted and timedelta(0) <= now - attempted < timedelta(hours=RETRY_HOURS):
+            continue
+        deadline = instant(rec.deadline, end=True)
+        urgent = rec.is_tech == "1" or rec.verification_status == "conflict" or (
+            deadline and now <= deadline <= now + timedelta(days=14))
+        (priority if urgent else other).append(rec)
+    def order(rec):
+        return (attempts.get(rec.key, {}).get("checked_at", ""), rec.verified_at or "",
+                rec.deadline or "9999", rec.key)
+    priority.sort(key=order)
+    other.sort(key=order)
+    quota = max(1, limit * 3 // 4)
+    chosen = priority[:quota] + other[:limit - min(quota, len(priority))]
+    selected = {r.key for r in chosen}
+    chosen += [r for r in priority + other if r.key not in selected][:limit - len(chosen)]
+    return chosen, len(priority) + len(other)
 
 
 def application_period(source: str, html: str) -> tuple[str, str, str]:
@@ -92,7 +127,10 @@ def allowed_url(rec: NoticeRecord) -> bool:
                 and parse_qs(url.query).get(expected[1]) == [rec.source_id])
 
 
-def recheck(db: Path, limit: int = 20, apply: bool = False, keys: list[str] | None = None) -> dict:
+def recheck(db: Path, limit: int = 100, apply: bool = False, keys: list[str] | None = None,
+            now: datetime | None = None) -> dict:
+    if not 1 <= limit <= 100:
+        raise ValueError("invalid_limit")
     if not db.is_file():
         raise ValueError("database_missing")
     # dry-run은 사본의 메모리 DB에서만 스키마를 이행한다.
@@ -105,17 +143,17 @@ def recheck(db: Path, limit: int = 20, apply: bool = False, keys: list[str] | No
         store._init_schema()
     try:
         records = store.load()
+        now = as_kst(now or datetime.now(KST))
         if keys:
-            candidates = [records[k] for k in keys if k in records]
+            candidates = [records[k] for k in dict.fromkeys(keys) if k in records]
+            due_count = len(candidates)
+            candidates = candidates[:limit]
         else:
-            now = datetime.now(KST)
-            candidates = [records[k] for k in KNOWN_KEYS if k in records]
-            candidates += sorted((r for r in records.values() if r.key not in KNOWN_KEYS
-                                  and r.is_tech == "1" and r.source in ("bizinfo", "kstartup")
-                                  and notice_state(r, now) not in ("closed", "open")),
-                                 key=lambda r: (r.verified_at or "", r.deadline or "9999"))
+            attempts = {r["key"]: dict(r) for r in store.conn.execute("SELECT * FROM recheck_attempts")}
+            candidates, due_count = select_candidates(records, attempts, now, limit)
         results = []
-        for rec in candidates[:limit]:
+        started_at = utc_now()
+        for rec in candidates:
             try:
                 if not allowed_url(rec):
                     raise ValueError("untrusted_url")
@@ -126,13 +164,21 @@ def recheck(db: Path, limit: int = 20, apply: bool = False, keys: list[str] | No
                 results.append({**result, "result": "confirmed"})
             except Exception as exc:
                 # 실패 원문/URL 예외에 포함된 민감값은 출력하지 않는다.
-                reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                known_errors = {"period_conflict", "period_missing", "period_invalid", "untrusted_url", "unsupported_source"}
+                reason = str(exc) if isinstance(exc, ValueError) and str(exc) in known_errors else type(exc).__name__
                 if reason == "period_conflict" and apply:
                     store.conn.execute("UPDATE notices SET verification_status='conflict' WHERE key=?", (rec.key,))
                     store.commit()
-                results.append({"key": rec.key, "result": "unconfirmed", "reason": reason})
-        return {"mode": "apply" if apply else "dry-run", "selected": min(limit, len(candidates)),
-                "remaining_candidates": max(0, len(candidates) - limit), "results": results}
+                results.append({"key": rec.key, "result": "unconfirmed", "reason": reason,
+                                "checked_at": utc_now()})
+            if apply:
+                item = results[-1]
+                with store.conn:
+                    store.conn.execute("INSERT OR REPLACE INTO recheck_attempts VALUES (?,?,?,?)",
+                                       (rec.key, item["checked_at"], item["result"], item.get("reason", "")))
+        return {"mode": "apply" if apply else "dry-run", "started_at": started_at,
+                "checked_at": utc_now(), "selected": len(candidates), "due_count": due_count,
+                "remaining_candidates": due_count - len(candidates), "results": results}
     finally:
         store.close()
 
@@ -140,13 +186,13 @@ def recheck(db: Path, limit: int = 20, apply: bool = False, keys: list[str] | No
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=Path("gov_notices.db"))
-    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--key", action="append", dest="keys")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    if not 1 <= args.limit <= 50:
-        parser.error("--limit은 1~50")
+    if not 1 <= args.limit <= 100:
+        parser.error("--limit은 1~100")
     result = recheck(args.db, args.limit, args.apply, args.keys)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if args.report:
