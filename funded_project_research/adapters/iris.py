@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 
-from .base import Adapter, RawNotice, http_post
+from .base import Adapter, RawNotice, SourceError, http_post
 
 BASE = "https://www.iris.go.kr/contents"
 LIST_URL = f"{BASE}/retrieveBsnsAncmListView.do"
@@ -67,23 +67,36 @@ class IrisAdapter(Adapter):
         self.interval = interval
 
     def collect(self) -> list[RawNotice]:
+        out = self.begin()
         first = http_post(LIST_URL, {"pageIndex": 1}).decode("utf-8")
         m = _TOTAL_PAGES.search(first)
-        total = min(int(m.group(1)), self.max_pages) if m else 1
-
         rows = parse_rows(first)
+        if not m or not rows:
+            raise SourceError("unverified_empty_page")
+        total = min(int(m.group(1)), self.max_pages)
+        self.add_page(rows, "ancmId")
         for page in range(2, total + 1):
             html = http_post(LIST_URL, {"pageIndex": page}).decode("utf-8")
-            rows += parse_rows(html)
+            page_rows = parse_rows(html)
+            if not page_rows:
+                raise SourceError("unverified_empty_page")
+            self.add_page(page_rows, "ancmId")
+        if int(m.group(1)) > self.max_pages:
+            self.capped()
 
         if self.detail:
-            for r in rows:
-                html = http_post(VIEW_URL, {
-                    "ancmId": r["ancmId"], "bsnsYy": r["bsnsYy"],
-                    "bsnsYyDetail": r["bsnsYy"], "sorgnBsnsCd": r["sorgnBsnsCd"],
-                    "bsnsAncmSn": r["bsnsAncmSn"],
-                }).decode("utf-8")
-                r.update(parse_detail(html))
+            for rec in out:
+                r = rec.raw
+                try:
+                    html = http_post(VIEW_URL, {
+                        "ancmId": r["ancmId"], "bsnsYy": r["bsnsYy"],
+                        "bsnsYyDetail": r["bsnsYy"], "sorgnBsnsCd": r["sorgnBsnsCd"],
+                        "bsnsAncmSn": r["bsnsAncmSn"],
+                    }).decode("utf-8")
+                    r.update(parse_detail(html))
+                except Exception:
+                    self.collection_state, self.collection_error = "partial", "detail_failed"
+                    break
                 time.sleep(self.interval)  # courteous: 상세 ~103 POST/실행 rate-limit 보호
 
-        return [RawNotice(self.source, r) for r in rows]
+        return out

@@ -13,6 +13,10 @@ on:
         description: "최초 설치만: data 브랜치가 없을 때 빈 DB 생성(메일 자동 생략)"
         type: boolean
         default: false
+      recheck_only:
+        description: "수집/발송 없이 공식 원문 재확인과 대시보드 배포"
+        type: boolean
+        default: false
 
 # 예약/수동/브랜치 실행 모두 같은 DB를 쓰므로 하나의 그룹에서 직렬화한다.
 concurrency:
@@ -36,6 +40,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Run offline tests
         env:
@@ -64,6 +71,9 @@ jobs:
           retention-days: 30
 
       - name: Run collector
+        id: collector
+        if: ${{ !inputs.recheck_only }}
+        continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
@@ -87,6 +97,16 @@ jobs:
             args+=(--no-notify)
           fi
           python -m funded_project_research.collect "${args[@]}"
+
+      - name: Recheck structured official application periods without email
+        run: python -m funded_project_research.recheck --apply --limit 20 --report recheck-report.json
+
+      - name: Preserve recheck evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recheck-${{ github.run_id }}-${{ github.run_attempt }}
+          path: recheck-report.json
+          retention-days: 30
 
       - name: Validate collected DB before persistence and deployment
         run: python -m scripts.ci_db validate
@@ -128,3 +148,9 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Report source or collection failure after publishing status
+        if: steps.collector.outcome == 'failure'
+        run: |
+          echo "수집 오류가 있습니다. 보존된 데이터와 출처 상태를 배포했으며 이 실행은 실패로 표시합니다."
+          exit 1

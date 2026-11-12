@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import ssl
 import urllib.request
 from abc import ABC, abstractmethod
@@ -40,8 +41,8 @@ class RawNotice:
 
 
 # 정부 데이터 호스트 일부는 인증서에 AKI 확장이 없어 OpenSSL 3.x가
-# CERTIFICATE_VERIFY_FAILED를 낸다(curl은 관대해 통과). 이 화이트리스트
-# 호스트에 한해서만 TLS 검증을 완화하고, 그 외 모든 호스트는 정상 검증한다.
+# CERTIFICATE_VERIFY_FAILED를 낸다. 이 목록은 strict 확장 검사만 완화한다.
+# 인증서 체인·서명·유효기간·호스트 이름 검증은 모든 호스트에서 유지한다.
 # (사용자 명시 승인 2026-06-22)
 _TLS_RELAXED_HOSTS = frozenset({
     "nidapi.k-startup.go.kr",
@@ -58,8 +59,7 @@ def http_get(url: str, timeout: int = 30) -> bytes:
     context = None
     if urlparse(url).hostname in _TLS_RELAXED_HOSTS:
         context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
     with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         return resp.read()
 
@@ -78,8 +78,7 @@ def http_post(url: str, fields: dict, timeout: int = 30) -> bytes:
     context = None
     if urlparse(url).hostname in _TLS_RELAXED_HOSTS:
         context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
     with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         return resp.read()
 
@@ -94,7 +93,48 @@ class Adapter(ABC):
     """모든 어댑터는 collect()로 RawNotice 리스트를 반환한다."""
 
     source: str
+    collection_state = "success"
+    collection_error = ""
+    page_count = 0
+
+    def begin(self) -> list[RawNotice]:
+        self.records = []
+        self.page_hashes = set()
+        self.page_count = 0
+        self.collection_state = "success"
+        self.collection_error = ""
+        return self.records
+
+    def add_page(self, items, id_field: str) -> None:
+        if not isinstance(items, list) or any(not isinstance(r, dict) or not r.get(id_field) for r in items):
+            raise SourceError("schema")
+        self.page_count += 1
+        if not items:
+            return
+        fingerprint = hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest()
+        if fingerprint in self.page_hashes:
+            raise SourceError("repeated_page")
+        self.page_hashes.add(fingerprint)
+        self.records.extend(RawNotice(self.source, r) for r in items)
+
+    def capped(self) -> None:
+        self.collection_state = "partial"
+        self.collection_error = "page_limit"
+
+    def check_total(self, expected) -> None:
+        if expected is not None and str(expected).isdigit() and len(self.records) != int(expected):
+            self.collection_state = "partial"
+            self.collection_error = "count_mismatch"
 
     @abstractmethod
     def collect(self) -> list[RawNotice]:
         ...
+
+
+class SourceError(ValueError):
+    """공개 로그에는 응답 전문이나 인증값 대신 정해진 오류 종류만 남긴다."""
+
+
+def check_api_code(code) -> None:
+    if code is not None and str(code) not in ("00", "0", "NORMAL_SERVICE"):
+        raise SourceError("api_error")

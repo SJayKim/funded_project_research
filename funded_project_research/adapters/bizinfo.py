@@ -9,7 +9,7 @@ import os
 import time
 from urllib.parse import urlencode
 
-from .base import Adapter, RawNotice, http_get_json
+from .base import Adapter, RawNotice, SourceError, check_api_code, http_get_json
 
 BASE = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
 
@@ -26,13 +26,21 @@ class BizinfoAdapter(Adapter):
         self.max_pages = max_pages
 
     def collect(self) -> list[RawNotice]:
-        out: list[RawNotice] = []
+        out = self.begin()
         for page in range(1, self.max_pages + 1):
             if page > 1:
                 time.sleep(PAGE_DELAY_SEC)
             url = f"{BASE}?{urlencode({'crtfcKey': self.crtfc_key, 'dataType': 'json', 'pageUnit': self.per_page, 'pageIndex': page})}"
-            items = http_get_json(url).get("jsonArray") or []
+            payload = http_get_json(url)
+            if not isinstance(payload, dict) or "jsonArray" not in payload:
+                raise SourceError("schema")
+            check_api_code(payload.get("resultCode"))
+            if payload.get("error"):
+                raise SourceError("api_error")
+            items = payload["jsonArray"]
+            self.add_page(items, "pblancId")
             if not items:
                 break
-            out += [RawNotice(self.source, r) for r in items]
+        else:
+            self.capped()
         return out

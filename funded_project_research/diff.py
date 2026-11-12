@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from .normalize import WATCH_FIELDS, NoticeRecord, deadline_date
+from .status import as_kst, notice_state
 
 IMMINENT_THRESHOLDS = (7, 3, 1)
 
@@ -53,13 +54,15 @@ def days_left(rec: NoticeRecord, today: date) -> int | None:
     d = deadline_date(rec)
     if d is None:
         return None
-    return (d - today).days
+    return (d - as_kst(today).date()).days
 
 
 def find_imminent(current: list[NoticeRecord], today: date) -> list[tuple[NoticeRecord, int]]:
     """(record, threshold) 리스트. threshold는 7/3/1 중 도달한 값."""
     out: list[tuple[NoticeRecord, int]] = []
     for r in current:
+        if notice_state(r, today, require_fresh=False) != "open":
+            continue
         dl = days_left(r, today)
         if dl is None:
             continue

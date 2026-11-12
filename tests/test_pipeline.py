@@ -404,6 +404,8 @@ class TestSummaryCaching(unittest.TestCase):
         enriched = rec("kstartup", "1", title="AI 자동화 R&D")
         enriched.key_dates = "2026-07-01 ~ 2026-07-31"
         enriched.extraction_status = "ok"
+        from funded_project_research.normalize import content_basis
+        enriched.extraction_basis = content_basis(enriched)
         self.store.upsert(enriched, "2026-06-22T00:00:00")  # enrich 결과 모사
         run(self.store, [rec("kstartup", "1", title="AI 자동화 R&D")], today)  # 추출필드 공란 재수집
         loaded = self.store.load()["kstartup:1"]
@@ -814,8 +816,8 @@ class TestServe(unittest.TestCase):
         page = serve.PAGE
         self.assertIn('id="hideClosed"', page)                       # 마감 숨김 체크박스
         self.assertIn('id="openTotal"', page)                        # 진행중 카운트 슬롯
-        self.assertIn('진행중', page)                                # 헤드라인 진행중 부제
-        self.assertIn('hideClosed && ddayInfo(d).days', page)        # 필터 술어 배선
+        self.assertIn('확인된 마감 전', page)
+        self.assertIn("hideClosed && state === 'closed'", page)
 
 
 class TestCollectIsolation(unittest.TestCase):
@@ -838,7 +840,7 @@ class TestCollectIsolation(unittest.TestCase):
             collect.ADAPTERS = orig
         self.assertEqual([r.source for r in raws], ["kstartup"])
 
-    def test_geoblock_urlerror_is_info_not_warn(self):  # CI 지오차단(URLError)은 격리+info, warn 아님
+    def test_network_error_is_visible_without_claiming_geoblock(self):
         import io
         from contextlib import redirect_stderr
         from urllib.error import URLError
@@ -857,8 +859,9 @@ class TestCollectIsolation(unittest.TestCase):
         finally:
             collect.ADAPTERS = orig
         self.assertEqual(raws, [])
-        self.assertIn("[info]", buf.getvalue())
-        self.assertNotIn("[warn]", buf.getvalue())
+        self.assertIn("[warn]", buf.getvalue())
+        self.assertIn("network", buf.getvalue())
+        self.assertNotIn("지오차단", buf.getvalue())
 
 
 if __name__ == "__main__":

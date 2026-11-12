@@ -95,6 +95,28 @@ python -m scripts.ci_db restore --db gov_notices.db --backup-dir .gstack/db-base
 
 현재 구현·검증과 다음 단계는 [현재 인계](docs/sessions/HANDOFF-CURRENT.md)를 참고하세요.
 
+## 정보 신뢰성과 원문 재확인
+
+접수 상태와 D-day는 한국 현재 시각으로 계산합니다. 개별 공고를 확인한 기록이 없거나
+48시간이 지나면 `확인 필요`로 표시하며, 마감임박/확인된 마감 전 집계에서 제외합니다.
+기존 `last_seen`은 검증 시각으로 소급 사용하지 않습니다. 출처별 수집 완료·정상 0건·
+부분 수집·실패는 별도로 저장합니다. 수집 오류가 있으면 기존 데이터와 오류 상태를
+배포한 뒤 Actions를 실패로 표시합니다.
+
+기업마당·K-Startup의 구조화된 신청기간은 다음 명령으로 재확인합니다. 기본값은 읽기
+전용 dry-run입니다. 운영 적용 전 DB 백업과 변경 결과를 확인하세요. `--apply`는 기간·
+검증 근거만 갱신하며 공고 ID·최초수집일·기존 알림 이력을 보존하고 메일을 보내지 않습니다.
+
+```sh
+python -m funded_project_research.recheck --db gov_notices.db --limit 20 --report recheck.json
+python -m funded_project_research.recheck --db gov_notices.db --limit 20 --apply --report applied.json
+```
+
+정기 수집은 원문 20건을 함께 재확인합니다. 수동 workflow의 `recheck_only=true`는 수집과
+발송을 생략하고 재확인·DB 저장·대시보드 배포만 실행합니다. 단위 테스트에는 Node.js가
+필요합니다(Python/화면 날짜 규칙의 공통 fixture 실행). [실행안](docs/planning/reliability-release-2026-11-12.md)과
+[검증 인계](docs/sessions/reliability-2026-11-12.md)에 범위·미완료 항목을 기록합니다.
+
 ## 환경변수
 
 필수 또는 선택 환경변수는 다음과 같습니다.

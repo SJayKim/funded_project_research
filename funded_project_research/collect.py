@@ -9,17 +9,18 @@ from __future__ import annotations
 import os
 import sys
 from datetime import date, datetime
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from . import anthropic_client, classify, diff, extract, notify_email, summarize
-from .adapters.base import RawNotice, http_get
+from .adapters.base import RawNotice, SourceError, http_get
 from .adapters.bizinfo import BizinfoAdapter
 from .adapters.iris import IrisAdapter
 from .adapters.kstartup import KStartupAdapter
 from .adapters.msit import MsitAdapter
 from .adapters.nara import NaraAdapter
 from .dedupe import dedupe
-from .normalize import NoticeRecord, deadline_date, normalize
+from .normalize import NoticeRecord, content_basis, normalize
+from .status import KST, notice_state, utc_now
 from .store import Store
 
 ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
@@ -30,29 +31,64 @@ ENRICH_SKIP_SOURCES = ("nara", "msit")  # nara=입찰, msit=본문0/전부HWP(�
 CORPUS_DIR = "corpus"
 
 
-def collect_all() -> list[RawNotice]:
-    # 어댑터별 격리: 한 소스 실패가 전체 실행을 죽이지 않게 건너뛰고 나머지 진행.
-    # 해외 CI IP는 일부 정부서버(www.iris.go.kr·www.bizinfo.go.kr)를 지오차단 —
-    # 국내선 정상이나 CI선 timeout(실측 IRIS 2026-06-23, bizinfo 2026-07-01).
-    # 도달 실패(URLError)는 예상된 격리라 [info], 그 외는 실제 실패라 [warn].
+def collect_all(store: Store | None = None) -> list[RawNotice]:
+    """출처 장애를 격리하고 앞 페이지와 실제 결과를 보존한다."""
     raws: list[RawNotice] = []
     for cls in ADAPTERS:
+        attempted = utc_now()
+        adapter = None
+        rows = []
+        kind = ""
         try:
-            raws += cls().collect()
-        except URLError as e:
-            print(f"[info] {cls.__name__} CI 미도달(지오차단 추정), 격리 스킵: {e}", file=sys.stderr)
+            adapter = cls()
+            rows = adapter.collect()
+            state = getattr(adapter, "collection_state", "success")
+            kind = getattr(adapter, "collection_error", "")
+            if state == "success" and not rows:
+                state = "empty"
         except Exception as e:
-            print(f"[warn] {cls.__name__} 수집 실패, 건너뜀: {e}", file=sys.stderr)
+            rows = getattr(adapter, "records", [])
+            state = "partial" if rows else "failed"
+            if isinstance(e, SourceError):
+                kind = str(e)
+            elif isinstance(e, HTTPError):
+                kind = f"http_{e.code}"
+            elif isinstance(e, (URLError, TimeoutError)):
+                kind = "network"
+            elif isinstance(e, KeyError):
+                kind = "configuration"
+            else:
+                kind = type(e).__name__
+        if state in ("partial", "failed"):
+            print(f"[warn] {cls.__name__}: {state} ({kind}), 보존 {len(rows)}건", file=sys.stderr)
+        raws.extend(rows)
+        if store:
+            store.record_source(getattr(adapter, "source", getattr(cls, "source", cls.__name__)), state, attempted,
+                                utc_now(), len(rows), getattr(adapter, "page_count", 0), kind)
+            store.commit()
     return raws
 
 
 def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> dict:
     """순수 파이프라인(어댑터 제외). 테스트가 current를 직접 주입한다."""
     previous = store.load()
+    now_iso = utc_now()
 
     # 전건 카테고리/기술여부 결정(결정적 키워드 매칭).
     for rec in current:
         rec.category, rec.is_tech = classify.classify(rec)
+        rec.source_checked_at = now_iso
+        prev = previous.get(rec.key)
+        if prev and prev.verified_at:
+            rec.verified_at, rec.verified_deadline = prev.verified_at, prev.verified_deadline
+            if rec.deadline and (rec.deadline == prev.verified_deadline or
+                                 len(rec.deadline) == 10 and rec.deadline == prev.verified_deadline[:10]):
+                rec.deadline = prev.verified_deadline
+                if rec.starts_at and len(rec.starts_at) == 10 and rec.starts_at == prev.starts_at[:10]:
+                    rec.starts_at = prev.starts_at
+                rec.verification_status = "confirmed"
+            else:
+                rec.verification_status = "conflict"
 
     new = diff.find_new(previous, current)
     modified = diff.find_modified(previous, current)
@@ -70,17 +106,23 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
     for r in current:
         if r.key in summaries:
             r.summary = summaries[r.key]
-        elif not r.summary and (p := previous.get(r.key)) and p.summary:
-            r.summary = p.summary  # 기존 레코드 요약 유지(upsert가 ""로 덮지 않게)
+        elif not r.summary and (p := previous.get(r.key)) and p.summary and p.summary_basis == content_basis(r):
+            r.summary = p.summary
+        elif r.is_tech == "1":
+            r.summary = summarize._fallback(r)
+        if r.summary:
+            r.summary_basis = content_basis(r)
 
     # 기존 추출필드(enrich 결과) 유지: enrich는 run() 다음 단계라 current엔 항상 공란.
     # 안 살리면 upsert가 재수집된 공고의 추출값을 ""로 덮어 유실(summary와 동일 이슈).
     for r in current:
         if (p := previous.get(r.key)):
             for f in ("funding_amount", "eligibility", "required_docs",
-                      "key_dates", "extracted_from", "extraction_status"):
+                      "key_dates", "extracted_from", "extraction_status", "extraction_basis", "extracted_at"):
                 if not getattr(r, f):
                     setattr(r, f, getattr(p, f))
+            if r.extraction_status and r.extraction_basis != content_basis(r):
+                r.extraction_status = "stale"
 
     # 메일은 기술 공고만(DB엔 전건 저장).
     new_t = [r for r in new if r.is_tech == "1"]
@@ -92,7 +134,6 @@ def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> di
         notify_email.send(*msg)
 
     # 발송했으면(또는 send=False여도 적재는 진행) 알림 이력·레코드 기록.
-    now_iso = datetime.now().isoformat(timespec="seconds")
     for rec in new:
         store.mark_alert(rec.key, "new")
     for m in modified:
@@ -129,16 +170,16 @@ def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
     if not api_key:
         return {"enriched": 0, "dropped": 0, "skipped_no_key": True}
 
-    today = date.today()
+    today = datetime.now(KST)
     targets = [r for r in store.load().values()
-               if r.is_tech == "1" and r.extraction_status == ""
+               if r.is_tech == "1" and r.extraction_status in ("", "stale")
                and r.source not in ENRICH_SKIP_SOURCES and r.url
-               and (deadline_date(r) is None or deadline_date(r) >= today)]  # 마감 공고는 제외(신청 불가, 추출 낭비)
+               and notice_state(r, today, require_fresh=False) not in ("closed", "conflict")]
     dropped = max(0, len(targets) - cap)
     if dropped:
         print(f"[enrich] 대상 {len(targets)}건 중 {cap}건 처리, {dropped}건 이월", file=sys.stderr)
 
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = utc_now()
     enriched = 0
     for rec in targets[:cap]:
         try:
@@ -149,10 +190,12 @@ def enrich(store: Store, cap: int = ENRICH_CAP) -> dict:
                 setattr(rec, f, v)
             rec.extraction_status = status
             rec.extracted_from = rec.url if status != "failed" else ""
-            store.upsert(rec, now_iso)
+            rec.extraction_basis = content_basis(rec)
+            rec.extracted_at = now_iso
+            store.update_extraction(rec)
             enriched += 1
-        except Exception as e:  # fetch/저장 실패: status 미기록 → 다음 런 재시도
-            print(f"[enrich] {rec.key} 추출 실패, 건너뜀: {e}", file=sys.stderr)
+        except Exception as e:  # 인증값이 포함될 수 있는 예외 전문은 로그에 남기지 않는다.
+            print(f"[enrich] {rec.key} 추출 실패 ({type(e).__name__})", file=sys.stderr)
     store.commit()
     return {"enriched": enriched, "dropped": dropped}
 
@@ -162,11 +205,12 @@ def main() -> None:
     # run()은 send=False여도 알림이력·레코드를 기록하므로 다음 실행부터 진짜 델타만 알린다.
     send = "--no-notify" not in sys.argv
     store = Store()
-    raws = collect_all()
+    raws = collect_all(store)
     current = dedupe([normalize(r) for r in raws])
-    summary = run(store, current, date.today(), send=send)
+    summary = run(store, current, datetime.now(KST), send=send)
     # base 스냅샷 확정 후 2단계 추출(별도 트랜잭션. 터져도 일일 스냅샷·메일 안전).
     enr = enrich(store)
+    unhealthy = any(s["state"] in ("partial", "failed") for s in store.source_health())
     store.close()
     extra = "" if send else " | --no-notify(메일 생략, DB 시딩)"
     if enr.get("skipped_no_key"):
@@ -175,6 +219,8 @@ def main() -> None:
         extra += f" | 추출 {enr['enriched']}" + (f"(이월 {enr['dropped']})" if enr['dropped'] else "")
     print(f"수집 {len(current)}건 | 신규 {summary['new']} · 수정 {summary['modified']} · "
           f"임박 {summary['imminent']}" + extra)
+    if unhealthy:
+        raise SystemExit(2)  # workflow는 DB·장애 상태를 배포한 다음 실패로 표시한다.
 
 
 if __name__ == "__main__":
