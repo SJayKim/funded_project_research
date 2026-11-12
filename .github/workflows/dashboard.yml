@@ -1,0 +1,84 @@
+name: dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'funded_project_research/serve.py'
+      - 'funded_project_research/assets/**'
+      - '.github/workflows/dashboard.yml'
+      - 'tests/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run offline tests including dashboard rules
+        env:
+          RUN_LIVE_EVAL: '0'
+          ANTHROPIC_API_KEY: ''
+        run: python -m unittest discover -s tests -v
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: collect-data-pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: data
+          path: data-snapshot
+          sparse-checkout: gov_notices.db
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate existing snapshot without collecting or sending mail
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sqlite3
+          path = Path('data-snapshot/gov_notices.db').resolve()
+          with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
+              if db.execute('PRAGMA integrity_check').fetchall() != [('ok',)]:
+                  raise SystemExit('Snapshot integrity check failed')
+              count = db.execute('SELECT COUNT(*) FROM notices').fetchone()[0]
+              if count == 0:
+                  raise SystemExit('Refusing to publish an empty snapshot')
+              print(f'Existing notices: {count}')
+          PY
+      - name: Build dashboard from existing snapshot
+        env:
+          GOV_DB: data-snapshot/gov_notices.db
+        run: python -m funded_project_research.serve --build site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deploy
