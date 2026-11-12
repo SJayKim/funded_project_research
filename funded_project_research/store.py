@@ -57,6 +57,12 @@ class Store:
                 old_deadline TEXT, new_deadline TEXT, evidence TEXT,
                 PRIMARY KEY (key, content_hash, new_deadline)
             );
+            CREATE TABLE IF NOT EXISTS recheck_attempts (
+                key TEXT PRIMARY KEY, checked_at TEXT, result TEXT, reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS reliability_checks (
+                run_id TEXT PRIMARY KEY, checked_at TEXT, report_json TEXT
+            );
             """
         )
         self._migrate()

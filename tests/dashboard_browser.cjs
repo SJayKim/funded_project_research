@@ -7,16 +7,17 @@ const path = require('node:path');
 const base = process.argv[2] || 'http://127.0.0.1:48272/';
 const output = path.resolve('.gstack/dashboard-verification');
 mkdirSync(output, { recursive: true });
-function fixtureHTML(notices) {
+function fixtureHTML(notices, audit = null) {
   return execFileSync('python3', ['-c', `import json,sys
 from dataclasses import fields
 from funded_project_research.normalize import NoticeRecord, content_basis
 from funded_project_research.serve import render_page
-notices = json.load(sys.stdin)
+payload = json.load(sys.stdin)
+notices = payload['notices']
 for d in notices:
     basis = content_basis(NoticeRecord(**{f.name: d.get(f.name, '') for f in fields(NoticeRecord)}))
     d.update(summary_basis=basis, extraction_basis=basis)
-print(render_page(notices))`], { input: JSON.stringify(notices), encoding: 'utf8' });
+print(render_page(notices, audit=payload['audit']))`], { input: JSON.stringify({notices, audit}), encoding: 'utf8' });
 }
 
 (async () => {
@@ -124,15 +125,18 @@ print(render_page(notices))`], { input: JSON.stringify(notices), encoding: 'utf8
       { key: 'clock:stale', source: 'kstartup', title: '확인 만료', deadline: '2026-11-14', source_checked_at: '2026-11-10T15:00:00Z' }
     ];
     const clockURL = new URL('clock-fixture', base).href;
-    await page.route(clockURL, route => route.fulfill({ contentType: 'text/html', body: fixtureHTML(clockData) }));
+    const audit = { checked_at: '2026-11-12T07:00:00Z', status: 'attention', issues: [{code:'source_unhealthy'}], counts: {total:4}, official: {confirmed:2, unconfirmed:0} };
+    await page.route(clockURL, route => route.fulfill({ contentType: 'text/html', body: fixtureHTML(clockData, audit) }));
     await page.clock.install({ time: new Date('2026-11-12T14:59:58Z') });
     await page.evaluate(() => sessionStorage.clear());
     await page.goto(clockURL);
     await page.locator('[data-view="soon"]').click();
     const keys = () => page.locator('.record').evaluateAll(rows => rows.map(row => row.dataset.recordKey));
     assert.deepEqual(await keys(), ['clock:time', 'clock:day', 'clock:stale']);
+    assert.match(await page.locator('#check-status').innerText(), /재확인 필요 1개 항목/);
     await page.clock.fastForward(2500);
     assert.deepEqual(await keys(), ['clock:start']);
+    assert.match(await page.locator('#check-status').innerText(), /최근 점검 후 8시간 경과/);
     await page.evaluate(() => {
       HEALTH.push({ source: 'kstartup', state: 'failed', completed_at: '2026-11-12T14:00:00Z', count: 0, last_success: '' });
       render();
@@ -141,7 +145,7 @@ print(render_page(notices))`], { input: JSON.stringify(notices), encoding: 'utf8
     assert.match(await page.locator('#dist').innerText(), /K-Startup: 수집 실패/);
     assert.match(await page.locator('#dist').innerText(), /IRIS: 수집 상태 미확인/);
     assert.deepEqual(errors, []);
-    const report = { actualDataResult: real, widths, browser: 'Chromium', browserTimezone: 'America/Los_Angeles', checks: ['pagination', 'detail and clock refresh', 'focus and Escape', 'bid view', 'search snippets', 'empty and reset', 'unknown deadline', 'closed status', 'source filter', 'session restore', 'cards', 'long titles', 'untrusted text and links', 'local font', 'automatic deadline/start/freshness transitions', 'source health'], pageErrors: errors };
+    const report = { actualDataResult: real, widths, browser: 'Chromium', browserTimezone: 'America/Los_Angeles', checks: ['pagination', 'detail and clock refresh', 'focus and Escape', 'bid view', 'search snippets', 'empty and reset', 'unknown deadline', 'closed status', 'source filter', 'session restore', 'cards', 'long titles', 'untrusted text and links', 'local font', 'automatic deadline/start/freshness transitions', 'source health', 'overdue automatic check'], pageErrors: errors };
     writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } finally { await browser.close(); }

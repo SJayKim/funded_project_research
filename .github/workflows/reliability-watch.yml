@@ -1,0 +1,27 @@
+name: reliability-watch
+
+on:
+  schedule:
+    - cron: "43 * * * *" # 매시간 KST 43분. 6시간 점검의 누락과 공개 기록 지연 감시.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reliability-watch
+  cancel-in-progress: false
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Require a published check within eight hours
+        run: python -m scripts.check_published --url https://sjaykim.github.io/funded_project_research/reliability.json
