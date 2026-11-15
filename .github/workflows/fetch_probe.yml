@@ -61,7 +61,11 @@ jobs:
               ('nara-current', nara.BASE, params),
               ('nara-v02', 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService02/getBidPblancListInfoServc', params),
               ('msit-100', msit.BASE, {'pageNo': 1, 'numOfRows': 100}),
-              ('msit-99', msit.BASE, {'pageNo': 1, 'numOfRows': 99}),
+              ('msit-lower', msit.BASE, {'pageNo': 1, 'numOfrows': 100}),
+              ('msit-alllower', msit.BASE, {'pageNo': 1, 'numofrows': 100}),
+              ('msit-10', msit.BASE, {'pageNo': 1, 'numOfRows': 10}),
+              ('nara-exact7', nara.BASE, {**params, 'inqryBgnDt': (now - timedelta(days=7)).strftime('%Y%m%d%H%M')}),
+              ('nara-midnight7', nara.BASE, {**params, 'inqryBgnDt': (now - timedelta(days=7)).strftime('%Y%m%d') + '0000'}),
           ]
           def shape(value, depth=0):
               if isinstance(value, dict):
@@ -87,5 +91,8 @@ jobs:
                       except ET.ParseError:
                           print(name, 'non-json/non-xml', 'bytes', len(raw))
               except Exception as exc:
-                  print(name, 'error', type(exc).__name__)
+                  print(name, 'error', type(exc).__name__, getattr(exc, 'code', ''))
+                  if hasattr(exc, 'read'):
+                      body = exc.read().decode('utf-8', 'replace')
+                      print(name, 'known error markers', [code for code in ('SERVICE_KEY_IS_NOT_REGISTERED_ERROR', 'SERVICE_ACCESS_DENIED_ERROR', 'LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR', 'INVALID_REQUEST_PARAMETER_ERROR', 'ACCESS DENIED') if code in body])
           PYPROBE
