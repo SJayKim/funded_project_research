@@ -32,7 +32,8 @@ class NaraAdapter(Adapter):
         self.now = now or datetime.now(KST)
 
     def collect(self) -> list[RawNotice]:
-        bgn = (self.now - timedelta(days=self.lookback_days)).strftime("%Y%m%d") + "0000"
+        # The API counts both boundary dates in its seven-day limit.
+        bgn = (self.now - timedelta(days=self.lookback_days - 1)).strftime("%Y%m%d") + "0000"
         end = self.now.strftime("%Y%m%d%H%M")
         out = self.begin()
         for page in range(1, self.max_pages + 1):

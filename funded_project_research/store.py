@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import asdict, fields
 
@@ -63,6 +64,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS reliability_checks (
                 run_id TEXT PRIMARY KEY, checked_at TEXT, report_json TEXT
             );
+            CREATE TABLE IF NOT EXISTS quarantined_notices (
+                key TEXT, record_json TEXT, reason TEXT,
+                PRIMARY KEY (key, record_json)
+            );
             """
         )
         self._migrate()
@@ -74,6 +79,15 @@ class Store:
         for col in NEW_COLUMNS:
             if col not in existing:
                 self.conn.execute(f"ALTER TABLE notices ADD COLUMN {col} TEXT")
+        # Older IRIS parsing ingested the JSRender template as a real notice.
+        # Archive its complete row before removal; retain all alert/history rows.
+        key = "iris:{{:ancmId}}"
+        row = self.conn.execute("SELECT * FROM notices WHERE key=? AND source='iris' AND source_id=?",
+                                (key, "{{:ancmId}}")).fetchone()
+        if row:
+            self.conn.execute("INSERT OR IGNORE INTO quarantined_notices VALUES (?,?,?)",
+                              (key, json.dumps(dict(row), ensure_ascii=False, sort_keys=True), "iris_jsrender_template"))
+            self.conn.execute("DELETE FROM notices WHERE key=?", (key,))
 
     def load(self) -> dict[str, NoticeRecord]:
         """기존 적재 레코드(직전 스냅샷)를 key->NoticeRecord로."""

@@ -8,7 +8,7 @@ import os
 
 from .base import Adapter, RawNotice, SourceError, build_url, check_api_code, http_get_json
 
-BASE = "https://nidapi.k-startup.go.kr/api/kisedKstartupService/v1/getAnnouncementInformation"
+BASE = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
 
 
 class KStartupAdapter(Adapter):
