@@ -30,6 +30,8 @@ _ATCH = re.compile(r"downloadAtchFile\('[^']*','[^']*','([^']*)'")
 
 
 def parse_rows(html: str) -> list[dict]:
+    # The page also embeds a JSRender row template; it is not a notice.
+    html = re.sub(r'<script\b[^>]*>.*?</script\s*>', '', html, flags=re.S | re.I)
     rows = []
     for m in _ROW.finditer(html):
         args = [a.strip().strip("'") for a in m.group("args").split(",")]
