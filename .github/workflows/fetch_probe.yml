@@ -10,9 +10,7 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -39,21 +37,3 @@ jobs:
               except Exception as e:
                   print(f'[{name}] FAIL {type(e).__name__}: {e}')
           PY
-
-      - name: Verify repaired source adapters without database or notifications
-        env:
-          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
-        run: |
-          python -u - <<'PYVERIFY'
-          from funded_project_research.adapters.nara import NaraAdapter
-          from funded_project_research.adapters.msit import MsitAdapter
-          from funded_project_research.adapters.iris import IrisAdapter
-          for cls in (NaraAdapter, IrisAdapter, MsitAdapter):
-              adapter = cls()
-              print('START', adapter.source, flush=True)
-              try:
-                  rows = adapter.collect()
-                  print('RESULT', adapter.source, adapter.collection_state, len(rows), adapter.page_count, adapter.collection_error, flush=True)
-              except Exception as exc:
-                  print('RESULT', adapter.source, 'failed', type(exc).__name__, len(getattr(adapter, 'records', [])), flush=True)
-          PYVERIFY
