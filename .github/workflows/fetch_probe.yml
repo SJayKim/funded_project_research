@@ -10,7 +10,9 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -37,3 +39,53 @@ jobs:
               except Exception as e:
                   print(f'[{name}] FAIL {type(e).__name__}: {e}')
           PY
+
+      - name: Probe source response contracts without recording payloads
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+        run: |
+          python - <<'PYPROBE'
+          import json, os, re
+          import xml.etree.ElementTree as ET
+          from datetime import datetime, timedelta
+          from funded_project_research.adapters.base import http_get, build_url
+          from funded_project_research.adapters import kstartup, nara, msit
+          from funded_project_research.status import KST
+          now = datetime.now(KST)
+          params = {'pageNo': 1, 'numOfRows': 100, 'inqryDiv': 1,
+                    'inqryBgnDt': (now - timedelta(days=6)).strftime('%Y%m%d') + '0000',
+                    'inqryEndDt': now.strftime('%Y%m%d%H%M'), 'type': 'json'}
+          probes = [
+              ('kstartup-current', kstartup.BASE, {'page': 1, 'perPage': 100, 'returnType': 'json'}),
+              ('kstartup-gateway', 'https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01', {'page': 1, 'perPage': 100, 'returnType': 'json'}),
+              ('nara-current', nara.BASE, params),
+              ('nara-v02', 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService02/getBidPblancListInfoServc', params),
+              ('msit-100', msit.BASE, {'pageNo': 1, 'numOfRows': 100}),
+              ('msit-99', msit.BASE, {'pageNo': 1, 'numOfRows': 99}),
+          ]
+          def shape(value, depth=0):
+              if isinstance(value, dict):
+                  return {k: shape(v, depth + 1) for k, v in value.items() if depth < 4}
+              if isinstance(value, list):
+                  return {'type': 'list', 'length': len(value), 'item': shape(value[0], depth + 1) if value else None}
+              return type(value).__name__
+          for name, base, params in probes:
+              try:
+                  raw = http_get(build_url(base, os.environ['SERVICE_KEY'], params), timeout=15)
+                  try:
+                      value = json.loads(raw)
+                      print(name, json.dumps(shape(value)))
+                      envelope = value.get('response', value) if isinstance(value, dict) else {}
+                      for section in [envelope, envelope.get('header', {}), envelope.get('body', {})]:
+                          if isinstance(section, dict):
+                              print(name, 'numeric metadata', {k: v for k,v in section.items() if k in ('resultCode', 'code', 'totalCount', 'matchCount', 'numOfRows', 'pageNo', 'perPage') and re.fullmatch(r'[0-9]+', str(v))})
+                  except (ValueError, TypeError):
+                      try:
+                          root = ET.fromstring(raw)
+                          print(name, 'xml', root.tag, 'items', len(root.findall('.//item')),
+                                'numeric metadata', {k: root.findtext('.//' + k) for k in ('resultCode','totalCount','numOfRows','pageNo') if re.fullmatch(r'[0-9]+',root.findtext('.//' + k) or '')})
+                      except ET.ParseError:
+                          print(name, 'non-json/non-xml', 'bytes', len(raw))
+              except Exception as exc:
+                  print(name, 'error', type(exc).__name__)
+          PYPROBE
