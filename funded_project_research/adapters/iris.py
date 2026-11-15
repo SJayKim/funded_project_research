@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from urllib.error import HTTPError, URLError
 
 from .base import Adapter, RawNotice, SourceError, http_post
 
@@ -27,6 +28,17 @@ _TOTAL_PAGES = re.compile(r'current_page">[^<]*<strong>\d+</strong>/(\d+)')
 _ANCM_NO = re.compile(r"<em>공고번호</em><span>([^<]*)</span>")
 # downloadAtchFile('docId','fileId','fileNm','fileSz') — 3번째 인자가 파일명.
 _ATCH = re.compile(r"downloadAtchFile\('[^']*','[^']*','([^']*)'")
+
+
+def _fetch_html(url: str, fields: dict) -> str:
+    # These POST endpoints only retrieve pages; retry a connection failure once.
+    try:
+        raw = http_post(url, fields)
+    except HTTPError:
+        raise
+    except (URLError, TimeoutError):
+        raw = http_post(url, fields)
+    return raw.decode("utf-8")
 
 
 def parse_rows(html: str) -> list[dict]:
@@ -70,7 +82,7 @@ class IrisAdapter(Adapter):
 
     def collect(self) -> list[RawNotice]:
         out = self.begin()
-        first = http_post(LIST_URL, {"pageIndex": 1}).decode("utf-8")
+        first = _fetch_html(LIST_URL, {"pageIndex": 1})
         m = _TOTAL_PAGES.search(first)
         rows = parse_rows(first)
         if not m or not rows:
@@ -78,7 +90,7 @@ class IrisAdapter(Adapter):
         total = min(int(m.group(1)), self.max_pages)
         self.add_page(rows, "ancmId")
         for page in range(2, total + 1):
-            html = http_post(LIST_URL, {"pageIndex": page}).decode("utf-8")
+            html = _fetch_html(LIST_URL, {"pageIndex": page})
             page_rows = parse_rows(html)
             if not page_rows:
                 raise SourceError("unverified_empty_page")
@@ -90,11 +102,11 @@ class IrisAdapter(Adapter):
             for rec in out:
                 r = rec.raw
                 try:
-                    html = http_post(VIEW_URL, {
+                    html = _fetch_html(VIEW_URL, {
                         "ancmId": r["ancmId"], "bsnsYy": r["bsnsYy"],
                         "bsnsYyDetail": r["bsnsYy"], "sorgnBsnsCd": r["sorgnBsnsCd"],
                         "bsnsAncmSn": r["bsnsAncmSn"],
-                    }).decode("utf-8")
+                    })
                     r.update(parse_detail(html))
                 except Exception:
                     self.collection_state, self.collection_error = "partial", "detail_failed"

@@ -1,5 +1,6 @@
 import unittest
 import json
+from threading import Barrier
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
@@ -41,6 +42,16 @@ class TestSourceContracts(unittest.TestCase):
         with patch('funded_project_research.adapters.nara.http_get_json', side_effect=response):
             self.assertEqual(NaraAdapter(service_key='fixture', now=now).collect(), [])
 
+    def test_iris_retries_connection_failure_once(self):
+        html = '<span class="current_page"><strong>1</strong>/1</span>' + self.ROW
+        with patch('funded_project_research.adapters.iris.http_post',
+                   side_effect=[TimeoutError(), html.encode()]):
+            self.assertEqual(len(IrisAdapter(detail=False).collect()), 1)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=TimeoutError()) as fetch:
+            with self.assertRaises(TimeoutError):
+                IrisAdapter(detail=False).collect()
+            self.assertEqual(fetch.call_count, 2)
+
     def test_msit_reads_past_fifty_pages_with_server_capped_page_size(self):
         def response(url):
             page = int(parse_qs(urlparse(url).query)['pageNo'][0])
@@ -64,6 +75,22 @@ class TestSourceContracts(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 MsitAdapter(service_key='fixture').collect()
             self.assertEqual(fetch.call_count, 2)
+
+    def test_msit_parallel_pages_keep_order_and_respect_explicit_cap(self):
+        ready = Barrier(2)
+        def response(url):
+            page = int(parse_qs(urlparse(url).query)['pageNo'][0])
+            if page > 1:
+                ready.wait(timeout=3)
+            return (f'<response><body><items><item><viewUrl>https://example.test/{page}</viewUrl>'
+                    f'</item></items><totalCount>10</totalCount></body></response>').encode()
+        with patch('funded_project_research.adapters.msit.http_get', side_effect=response) as fetch:
+            adapter = MsitAdapter(service_key='fixture', max_pages=3)
+            rows = adapter.collect()
+            self.assertEqual([r.raw['viewUrl'] for r in rows],
+                             [f'https://example.test/{i}' for i in range(1, 4)])
+            self.assertEqual(fetch.call_count, 3)
+            self.assertEqual((adapter.collection_state, adapter.collection_error), ('partial', 'page_limit'))
 
     def test_existing_iris_template_is_archived_without_losing_real_notices_or_alerts(self):
         store = Store(':memory:')
