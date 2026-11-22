@@ -7,6 +7,10 @@ name: fetch-probe
 on:
   workflow_dispatch:
     inputs:
+      check_iris_details:
+        description: "IRIS bounded comparison of public listing and detail routes"
+        type: boolean
+        default: false
       check_source_health:
         description: "모든 수집 어댑터를 운영 인증으로 읽기 전용 검증"
         type: boolean
@@ -24,7 +28,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Probe detail-page fetch
-        if: ${{ !inputs.check_source_health }}
+        if: ${{ !inputs.check_source_health && !inputs.check_iris_details }}
         run: |
           python - <<'PY'
           import urllib.request, ssl, re, html
@@ -49,7 +53,11 @@ jobs:
           PY
 
       - uses: actions/checkout@v4
-        if: ${{ inputs.check_source_health }}
+        if: ${{ inputs.check_source_health || inputs.check_iris_details }}
+
+      - name: Compare bounded public IRIS detail routes
+        if: ${{ inputs.check_iris_details }}
+        run: python -m scripts.iris_detail_probe
 
       - name: Check production sources without writing data
         if: ${{ inputs.check_source_health }}
