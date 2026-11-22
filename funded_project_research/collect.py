@@ -21,7 +21,7 @@ from .adapters.msit import MsitAdapter
 from .adapters.nara import NaraAdapter
 from .dedupe import dedupe
 from .normalize import NoticeRecord, content_basis, normalize
-from .status import KST, notice_state, utc_now
+from .status import KST, NONFIXED_PERIOD_STATES, notice_state, utc_now
 from .store import Store
 
 ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
@@ -88,11 +88,11 @@ def run(
         rec.category, rec.is_tech = classify.classify(rec)
         rec.source_checked_at = now_iso
         prev = previous.get(rec.key)
-        if prev and prev.url == rec.url and prev.verification_status == "conditional":
-            rec.deadline = rec.starts_at = ""
-            rec.verification_status, rec.period_condition = "conditional", prev.period_condition
+        if prev and prev.url == rec.url and prev.verification_status in NONFIXED_PERIOD_STATES:
+            rec.deadline = rec.starts_at = rec.verified_deadline = ""
+            rec.verification_status, rec.period_condition = prev.verification_status, prev.period_condition
             rec.verified_at = prev.verified_at
-        elif prev and prev.verified_at and prev.verification_status != "conditional":
+        elif prev and prev.verified_at and prev.verification_status not in NONFIXED_PERIOD_STATES:
             rec.verified_at, rec.verified_deadline = prev.verified_at, prev.verified_deadline
             if rec.deadline and (rec.deadline == prev.verified_deadline or
                                  len(rec.deadline) == 10 and rec.deadline == prev.verified_deadline[:10]):

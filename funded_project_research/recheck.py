@@ -28,6 +28,11 @@ ATTACHMENT_PERIOD = re.compile(
     r"(?:(?:첨부|첨부\s*파일|별첨|붙임)\s*(?:파일|공고문|공고)?|공고문)\s*(?:을\s*)?(?:참조|참고|확인)"
 )
 VARIABLE_PERIOD = re.compile(r"(?:세부\s*사업|차수|접수\s*방법)\s*별\s*상이")
+NONFIXED_PERIOD_REASONS = {
+    "period_conditional": "conditional",
+    "period_attachment": "manual_review",
+    "period_varies": "manual_review",
+}
 
 
 class PeriodError(ValueError):
@@ -232,7 +237,7 @@ def recheck(db: Path, limit: int = 100, apply: bool = False, keys: list[str] | N
                     item["url"] = official_url
                 if isinstance(exc, PeriodError) and exc.evidence:
                     item["evidence"] = exc.evidence[:500]
-                if reason == "period_conditional":
+                if reason in NONFIXED_PERIOD_REASONS:
                     item["old_deadline"] = rec.deadline
                 results.append(item)
             if apply:
@@ -241,11 +246,11 @@ def recheck(db: Path, limit: int = 100, apply: bool = False, keys: list[str] | N
                     if item.get("reason") == "period_conflict":
                         store.conn.execute("UPDATE notices SET verification_status='conflict', period_condition='' WHERE key=?",
                                            (rec.key,))
-                    elif item.get("reason") == "period_conditional":
-                        store.conn.execute("""UPDATE notices SET verification_status='conditional', period_condition=?,
+                    elif status := NONFIXED_PERIOD_REASONS.get(item.get("reason")):
+                        store.conn.execute("""UPDATE notices SET verification_status=?, period_condition=?,
                             verified_at=?, verified_deadline='',
                             deadline_raw=COALESCE(NULLIF(deadline_raw,''), deadline), deadline='', starts_at='' WHERE key=?""",
-                            (item["evidence"], item["checked_at"], rec.key))
+                            (status, item["evidence"], item["checked_at"], rec.key))
                     store.conn.execute("INSERT OR REPLACE INTO recheck_attempts VALUES (?,?,?,?)",
                                        (rec.key, item["checked_at"], item["result"], item.get("reason", "")))
         return {"mode": "apply" if apply else "dry-run", "started_at": started_at,

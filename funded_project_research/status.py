@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
 FRESH_HOURS = 48
+NONFIXED_PERIOD_STATES = frozenset({"conditional", "manual_review"})
 
 
 def utc_now() -> str:

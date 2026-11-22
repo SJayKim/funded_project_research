@@ -299,6 +299,32 @@ class TestOfficialRecheck(unittest.TestCase):
                 saved = store.load()[rec.key]
                 self.assertEqual((saved.period_condition, saved.verification_status, saved.deadline), ("", "confirmed", "2025-04-09"))
 
+    def test_manual_review_invalidates_a_previously_confirmed_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "gov.db"
+            url = "https://www.bizinfo.go.kr/test?pblancId=PBLN_1"
+            checked = "2026-11-12T00:00:00Z"
+            for evidence, reason in (("세부사업별 상이", "period_varies"), ("첨부 공고문 참조", "period_attachment")):
+                with self.subTest(reason=reason):
+                    rec = NoticeRecord("bizinfo", "PBLN_1", "AI 지원", url, deadline="2026-11-19",
+                                       verified_deadline="2026-11-19", verification_status="confirmed",
+                                       verified_at="2026-11-11")
+                    with closing(Store(str(db))) as store:
+                        store.upsert(rec, "old")
+                        store.commit()
+                    html = self.BIZ_CONDITIONAL.replace("예산 소진시까지", evidence)
+                    with patch.object(recheck, "http_get", return_value=html.encode()), \
+                         patch.object(recheck, "utc_now", return_value=checked):
+                        report = recheck.recheck(db, keys=[rec.key], apply=True)
+                    self.assertEqual(report["results"][0]["reason"], reason)
+                    now = datetime.fromisoformat(checked)
+                    with closing(Store(str(db))) as store:
+                        collect.run(store, [rec], now, send=False)
+                        saved = store.load()[rec.key]
+                        self.assertEqual((saved.verification_status, saved.period_condition), ("manual_review", evidence))
+                        self.assertEqual((saved.deadline, saved.verified_deadline), ("", ""))
+                        self.assertEqual(notice_state(saved, now), "unknown")
+
     def test_dry_run_and_repeat_apply_preserve_records_and_alerts(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "gov.db"
