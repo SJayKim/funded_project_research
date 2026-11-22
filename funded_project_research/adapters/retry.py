@@ -28,6 +28,8 @@ def request_error_kind(error: Exception) -> str:
     if isinstance(error, URLError):
         if isinstance(error.reason, ssl.SSLError):
             return "tls"
+        if isinstance(error.reason, TimeoutError):
+            return "timeout"
         return "network"
     if isinstance(error, TimeoutError):
         return "timeout"

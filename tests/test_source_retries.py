@@ -145,6 +145,21 @@ class TestSourceRetries(unittest.TestCase):
         self.assertIn("iris detail notice=1", self.log.getvalue())
         self.assertIn("attempt=2 recovered", self.log.getvalue())
 
+    def test_iris_distinguishes_detail_variants_and_reports_wrapped_timeout(self):
+        variants = iris_page("19508", "19508").replace(b"'S1','1','1'", b"'S1','2','1'", 1)
+        error = URLError(TimeoutError("fixture"))
+        with patch("funded_project_research.adapters.iris.http_post", side_effect=[
+            variants, error, error, IRIS_DETAIL,
+        ]) as fetch:
+            adapter = IrisAdapter(interval=0)
+            rows = adapter.collect()
+        sequence_calls = [call.args[1]["bsnsAncmSn"] for call in fetch.call_args_list[1:]]
+        self.assertEqual(sequence_calls, ["2", "2", "1"])
+        self.assertEqual(["attachments" in row.raw for row in rows], [False, True])
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("partial", "detail_timeout"))
+        self.assertIn("iris detail notice=19508 sequence=2 at=", self.log.getvalue())
+        self.assertIn("attempt=2 request_failed kind=timeout", self.log.getvalue())
+
     def test_unavailable_iris_detail_preserves_attachment_during_real_collection_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = str(Path(tmp) / "test.db")
