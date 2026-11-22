@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Collection
 from datetime import date, datetime
 from urllib.error import HTTPError, URLError
 
@@ -69,10 +70,18 @@ def collect_all(store: Store | None = None) -> list[RawNotice]:
     return raws
 
 
-def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> dict:
+def run(
+    store: Store, current: list[NoticeRecord], today: date, send=True,
+    *, missing_iris_details: Collection[str] = (),
+) -> dict:
     """순수 파이프라인(어댑터 제외). 테스트가 current를 직접 주입한다."""
     previous = store.load()
     now_iso = utc_now()
+
+    if missing_iris_details:
+        for rec in current:
+            if rec.key in missing_iris_details and rec.key in previous:
+                rec.attachments = previous[rec.key].attachments
 
     # 전건 카테고리/기술여부 결정(결정적 키워드 매칭).
     for rec in current:
@@ -214,8 +223,17 @@ def main() -> None:
         if unhealthy:
             raise SystemExit(2)
         return
-    current = dedupe([normalize(r) for r in raws])
-    summary = run(store, current, datetime.now(KST), send=send)
+    normalized = []
+    iris_detail_missing = {}
+    for raw in raws:
+        record = normalize(raw)
+        normalized.append(record)
+        if raw.source == "iris":
+            # dedupe retains the first record for a source ID.
+            iris_detail_missing.setdefault(record.key, "attachments" not in raw.raw)
+    current = dedupe(normalized)
+    summary = run(store, current, datetime.now(KST), send=send,
+                  missing_iris_details={key for key, missing in iris_detail_missing.items() if missing})
     # base 스냅샷 확정 후 2단계 추출(별도 트랜잭션. 터져도 일일 스냅샷·메일 안전).
     enr = enrich(store)
     unhealthy = any(s["state"] in ("partial", "failed") for s in store.source_health())

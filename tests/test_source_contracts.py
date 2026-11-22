@@ -31,7 +31,7 @@ class TestSourceContracts(unittest.TestCase):
 
     def test_nara_default_query_covers_seven_calendar_dates(self):
         now = datetime(2026, 11, 15, 12, 30, tzinfo=KST)
-        def response(url):
+        def response(url, timeout):
             query = parse_qs(urlparse(url).query)
             begin = datetime.strptime(query['inqryBgnDt'][0], '%Y%m%d%H%M')
             end = datetime.strptime(query['inqryEndDt'][0], '%Y%m%d%H%M')
@@ -42,7 +42,8 @@ class TestSourceContracts(unittest.TestCase):
         with patch('funded_project_research.adapters.nara.http_get_json', side_effect=response):
             self.assertEqual(NaraAdapter(service_key='fixture', now=now).collect(), [])
 
-    def test_iris_retries_connection_failure_once(self):
+    @patch('funded_project_research.adapters.retry.time.sleep')
+    def test_iris_retries_connection_failure_once(self, _sleep):
         html = '<span class="current_page"><strong>1</strong>/1</span>' + self.ROW
         with patch('funded_project_research.adapters.iris.http_post',
                    side_effect=[TimeoutError(), html.encode()]):

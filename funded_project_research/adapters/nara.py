@@ -9,6 +9,10 @@ import os
 from datetime import datetime, timedelta
 
 from .base import Adapter, RawNotice, SourceError, build_url, check_api_code, http_get_json
+from .retry import (
+    CONSECUTIVE_FAILURE_LIMIT, REQUEST_ERRORS, RequestTimeLimit, SourceRequests,
+    request_error_kind, transient,
+)
 from ..status import KST
 
 BASE = "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc"
@@ -36,11 +40,24 @@ class NaraAdapter(Adapter):
         bgn = (self.now - timedelta(days=self.lookback_days - 1)).strftime("%Y%m%d") + "0000"
         end = self.now.strftime("%Y%m%d%H%M")
         out = self.begin()
+        requests = SourceRequests(self.source)
+        missing_kind = ""
+        consecutive_failures = 0
         for page in range(1, self.max_pages + 1):
             url = build_url(BASE, self.service_key,
                             {"pageNo": page, "numOfRows": self.num_rows, "inqryDiv": 1,
                              "inqryBgnDt": bgn, "inqryEndDt": end, "type": "json"})
-            response = http_get_json(url).get("response", {})
+            try:
+                response = requests.fetch("list", f"page={page}", http_get_json, url).get("response", {})
+            except REQUEST_ERRORS as error:
+                if not isinstance(error, RequestTimeLimit) and not transient(error):
+                    raise
+                missing_kind = request_error_kind(error)
+                consecutive_failures += 1
+                if isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                    break
+                continue
+            consecutive_failures = 0
             check_api_code(response.get("header", {}).get("resultCode"))
             body = response.get("body", {})
             if "items" not in body:
@@ -54,4 +71,7 @@ class NaraAdapter(Adapter):
                 break
         else:
             self.capped()
+        if missing_kind:
+            self.collection_state = "partial" if out else "failed"
+            self.collection_error = f"list_{missing_kind}"
         return out
