@@ -61,6 +61,7 @@ jobs:
           import os
           import re
           import xml.etree.ElementTree as ET
+          from collections import Counter
           from urllib.error import HTTPError
           from funded_project_research.adapters.base import build_url, http_get
           from funded_project_research.adapters.msit import BASE
@@ -70,46 +71,54 @@ jobs:
               return text if re.fullmatch(r"[0-9]{1,12}", text) else None
 
           def summarize(payload):
-              if payload.lstrip().startswith(b"{"):
-                  root = json.loads(payload)
-                  if "OpenAPI_ServiceResponse" in root:
-                      header = root["OpenAPI_ServiceResponse"].get("cmmMsgHeader", {})
-                      return {"format": "json", "provider_code": digits(header.get("returnReasonCode"))}
-                  response = root["response"]
-                  body = response.get("body") or {}
-                  items = body.get("items") or []
-                  if isinstance(items, dict):
-                      items = items.get("item") or []
-                  if isinstance(items, dict):
-                      items = [items]
-                  urls = [item.get("viewUrl", "") for item in items]
-                  fields = {"format": "json",
-                            "result_code": digits(response.get("header", {}).get("resultCode")),
-                            "total": digits(body.get("totalCount")),
-                            "actual_page": digits(body.get("pageNo")),
-                            "actual_size": digits(body.get("numOfRows"))}
-              else:
+              if payload.lstrip().startswith(b"<"):
                   root = ET.fromstring(payload)
-                  if root.tag == "OpenAPI_ServiceResponse":
-                      return {"format": "xml", "provider_code": digits(root.findtext(".//returnReasonCode"))}
-                  urls = [item.findtext("viewUrl") or "" for item in root.findall(".//items/item")]
-                  fields = {"format": "xml",
-                            "result_code": digits(root.findtext(".//resultCode")),
-                            "total": digits(root.findtext(".//totalCount")),
-                            "actual_page": digits(root.findtext(".//pageNo")),
-                            "actual_size": digits(root.findtext(".//numOfRows"))}
-              ids = [match.group(1) if (match := re.search(r"nttSeqNo=([0-9]{1,12})(?:\D|$)", url))
-                     else None for url in urls]
-              return {**fields, "count": len(urls), "notice_ids": ids}
+                  return {"format": "xml", "provider_code": digits(root.findtext(".//returnReasonCode"))}
+              metadata = {}
+              shapes = {}
+              field_counts = Counter()
+              ids = []
+              metadata_names = ("resultCode", "returnReasonCode", "totalCount", "pageNo", "numOfRows")
+              container_names = ("response", "OpenAPI_ServiceResponse", "cmmMsgHeader",
+                                 "header", "body", "items", "item", "files", "file")
+              data_names = ("subject", "viewUrl", "deptName", "managerName", "managerTel",
+                            "pressDt", "fileName", "fileUrl")
 
-          cases = [(329, 10, "xml"), (330, 10, "xml"), (331, 10, "xml"),
-                   (330, 10, "json"), (658, 5, "xml"), (659, 5, "xml"),
-                   (660, 5, "xml"), (661, 5, "xml"), (330, 100, None)]
-          for page, size, fmt in cases:
-              result = {"requested_page": page, "requested_size": size, "requested_format": fmt}
-              params = {"pageNo": page, "numOfRows": size}
-              if fmt:
-                  params["returnType"] = fmt
+              def inspect(value, path, depth=0):
+                  if depth > 12:
+                      return
+                  shapes.setdefault(path, set()).add(type(value).__name__)
+                  if isinstance(value, str) and value.lstrip().startswith(("{", "[")):
+                      try:
+                          decoded = json.loads(value)
+                      except ValueError:
+                          return
+                      inspect(decoded, path + "(decoded)", depth + 1)
+                  elif isinstance(value, list):
+                      for child in value:
+                          inspect(child, path + "[]", depth + 1)
+                  elif isinstance(value, dict):
+                      for name in metadata_names:
+                          if name in value:
+                              metadata.setdefault(name, []).append(digits(value[name]))
+                      if "viewUrl" in value:
+                          match = re.search(r"nttSeqNo=([0-9]{1,12})(?:\D|$)", str(value["viewUrl"]))
+                          ids.append(match.group(1) if match else None)
+                      for name in data_names:
+                          if name in value:
+                              field_counts[name] += 1
+                      for name in container_names:
+                          if name in value:
+                              inspect(value[name], path + "." + name, depth + 1)
+
+              inspect(json.loads(payload), "$")
+              return {"format": "json", "metadata": metadata, "count": len(ids), "notice_ids": ids,
+                      "shape": {key: sorted(types) for key, types in sorted(shapes.items())},
+                      "field_counts": field_counts}
+
+          for page in (329, 330, 331):
+              result = {"requested_page": page, "requested_size": 10, "requested_format": "json"}
+              params = {"pageNo": page, "numOfRows": 10, "returnType": "json"}
               try:
                   payload = http_get(build_url(BASE, os.environ["SERVICE_KEY"], params), timeout=12)
                   result["http_outcome"] = "2xx"
