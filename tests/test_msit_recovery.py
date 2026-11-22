@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 from collections import Counter
@@ -28,6 +29,20 @@ def _page_xml(page, total, notice=None):
     return (f"<response><header><resultCode>00</resultCode></header><body>"
             f"<items>{item}</items><pageNo>{page}</pageNo>"
             f"<totalCount>{total}</totalCount></body></response>").encode()
+
+
+def _page_json(page, total, notice=None, page_size=1):
+    item = {
+        "viewUrl": f"https://example.test/{page}?nttSeqNo={notice or page}",
+        "subject": "사업공고",
+        "pressDt": "2020-01-02",
+        "files": [{"file": {"fileName": "공고문.hwpx", "fileUrl": "https://example.test/file"}}],
+    }
+    return json.dumps({"response": [
+        {"header": {"resultCode": "00"}},
+        {"body": {"items": [{"item": item}], "pageNo": page,
+                  "numOfRows": page_size, "totalCount": total}},
+    ]}).encode()
 
 
 class TestMsitPageRecovery(unittest.TestCase):
@@ -65,22 +80,55 @@ class TestMsitPageRecovery(unittest.TestCase):
                 requests = []
 
                 def fetch(url):
-                    page = _page_number(url)
-                    requests.append(page)
+                    params = parse_qs(urlparse(url).query)
+                    page = int(params["pageNo"][0])
+                    requested_format = params.get("returnType", ["xml"])[0]
+                    requests.append((page, requested_format))
                     if page == 2:
-                        return PROVIDER_ERROR if requests.count(2) == 1 else _page_xml(page, 4, returned_id)
+                        if requested_format == "json":
+                            self.assertEqual(params["numOfRows"], ["1"])
+                            return _page_json(page, 4, returned_id)
+                        return PROVIDER_ERROR
                     return _page_xml(page, 4)
 
                 adapter = MsitAdapter(service_key="fixture")
                 with patch(f"{TARGET}.http_get", side_effect=fetch), redirect_stderr(io.StringIO()) as log:
                     rows = adapter.collect()
 
-                self.assertEqual(requests[-2:], [4, 2])
+                self.assertEqual(requests[-2:], [(4, "xml"), (2, "json")])
                 self.assertEqual((adapter.collection_state, adapter.collection_error), (state, detail))
                 self.assertEqual([row.raw["viewUrl"].rsplit("=", 1)[-1] for row in rows],
                                  ["1", "2", "3", "4"] if state == "success" else ["1", "3", "4"])
                 if state == "success":
                     self.assertIn("page 2 recovered (provider_04)", log.getvalue())
+                    self.assertEqual(rows[1].raw["subject"], "사업공고")
+                    self.assertEqual(rows[1].raw["pressDt"], "2020-01-02")
+                    self.assertEqual(rows[1].raw["files"],
+                                     [{"fileName": "공고문.hwpx", "fileUrl": "https://example.test/file"}])
+
+    def test_json_fallback_rejects_wrong_page_or_size(self):
+        for returned_page, returned_size, reason in [
+            (3, 1, "page_number_mismatch"),
+            (2, 2, "page_size_mismatch"),
+        ]:
+            with self.subTest(returned_page=returned_page, returned_size=returned_size):
+                def fetch(url):
+                    params = parse_qs(urlparse(url).query)
+                    page = int(params["pageNo"][0])
+                    if page != 2:
+                        return _page_xml(page, 3)
+                    if params.get("returnType") == ["json"]:
+                        return _page_json(returned_page, 3, page_size=returned_size)
+                    return PROVIDER_ERROR
+
+                adapter = MsitAdapter(service_key="fixture")
+                with patch(f"{TARGET}.http_get", side_effect=fetch) as get:
+                    rows = adapter.collect()
+
+                self.assertEqual(get.call_count, 4)
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(adapter.collection_state, "partial")
+                self.assertEqual(adapter.collection_error, f"page_2_{reason}")
 
     def test_changed_total_and_recovery_request_budget_stay_visible(self):
         def fetch(url):

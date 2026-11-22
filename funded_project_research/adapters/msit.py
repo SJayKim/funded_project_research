@@ -1,9 +1,10 @@
-"""과기정통부 R&D 공고 (data.go.kr 15074634). XML 고정, 브라우저 UA 필수.
+"""과기정통부 R&D 공고 (data.go.kr 15074634). 기본 XML, HTTP_ERROR에서 JSON 재조회.
 
 마감일 필드 없음(pressDt 게시일만) → 신규 알림만. 고유키는 viewUrl의 nttSeqNo.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -18,6 +19,7 @@ from .base import Adapter, RawNotice, SourceError, build_url, check_api_code, ht
 BASE = "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList"
 COLLECT_BUDGET_SECONDS = 12 * 60
 MAX_RECOVERY_PAGES = 12
+PROVIDER_HTTP_ERROR = "provider_04"
 
 
 class _PageError(SourceError):
@@ -43,6 +45,59 @@ def _notice_id(row: dict) -> str:
     return match.group(1) if match else url
 
 
+def _json_objects(values, label: str) -> list[dict]:
+    if values is None or values == "":
+        return []
+    if not isinstance(values, list):
+        raise _PageError("json_schema")
+    objects = []
+    for wrapper in values:
+        obj = wrapper.get(label) if isinstance(wrapper, dict) else None
+        if not isinstance(obj, dict):
+            raise _PageError("json_schema")
+        objects.append(obj)
+    return objects
+
+
+def _json_text_fields(fields: dict) -> dict:
+    if any(value is not None and not isinstance(value, (str, int, float, bool)) for value in fields.values()):
+        raise _PageError("json_schema")
+    return {key: str(value) if value is not None else "" for key, value in fields.items()}
+
+
+def _json_page(raw: bytes, page: int, page_size: int) -> tuple[list[dict], int]:
+    # The provider represents response, items and files as lists of wrapped objects.
+    try:
+        parts = json.loads(raw)["response"]
+        header, = [part["header"] for part in parts if "header" in part]
+        body, = [part["body"] for part in parts if "body" in part]
+        code = str(header["resultCode"])
+        total = str(body["totalCount"])
+        actual_page = str(body["pageNo"])
+        actual_size = str(body["numOfRows"])
+        items = body["items"]
+    except (KeyError, TypeError, ValueError):
+        raise _PageError("json_schema") from None
+
+    check_api_code(code)
+    if actual_page != str(page):
+        raise _PageError("page_number_mismatch")
+    if actual_size != str(page_size):
+        raise _PageError("page_size_mismatch")
+    if not re.fullmatch(r"[0-9]{1,10}", total):
+        raise _PageError("json_schema")
+
+    rows = []
+    for item in _json_objects(items, "item"):
+        files = _json_objects(item.get("files"), "file")
+        row = _json_text_fields({key: value for key, value in item.items() if key != "files"})
+        row["files"] = [_json_text_fields(file) for file in files]
+        if not isinstance(item.get("viewUrl"), str) or not _notice_id(row).isdecimal():
+            raise _PageError("json_schema")
+        rows.append(row)
+    return rows, int(total)
+
+
 class MsitAdapter(Adapter):
     source = "msit"
 
@@ -51,25 +106,34 @@ class MsitAdapter(Adapter):
         self.num_rows = num_rows
         self.max_pages = max_pages
 
-    def _fetch_page(self, page: int) -> tuple[list[dict], int | None]:
-        url = build_url(BASE, self.service_key, {"pageNo": page, "numOfRows": self.num_rows})
+    def _fetch_page(self, page: int, *, json_page_size: int | None = None) -> tuple[list[dict], int | None]:
+        params = {"pageNo": page, "numOfRows": self.num_rows}
+        if json_page_size is not None:
+            params.update(numOfRows=json_page_size, returnType="json")
+        url = build_url(BASE, self.service_key, params)
         try:
-            root = ET.fromstring(http_get(url))
-        except ET.ParseError:
-            raise _PageError("schema") from None
+            raw = http_get(url)
         except HTTPError as error:
             if 500 <= error.code < 600:
                 raise _PageError(f"http_{error.code}") from None
             raise SourceError(f"http_{error.code}") from None
 
+        if json_page_size is not None and not raw.lstrip().startswith(b"<"):
+            return _json_page(raw, page, json_page_size)
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError:
+            raise _PageError("schema") from None
         if root.tag == "OpenAPI_ServiceResponse":
             code = (root.findtext(".//returnReasonCode") or "").strip()
             reason = f"provider_{code}" if re.fullmatch(r"[0-9]{2}", code) else "provider_error"
             # 04 (HTTP_ERROR) can affect one upstream page while adjacent pages work.
-            if code == "04":
+            if reason == PROVIDER_HTTP_ERROR:
                 raise _PageError(reason)
             raise SourceError(reason)
 
+        if json_page_size is not None:
+            raise _PageError("expected_json")
         if root.tag != "response":
             raise _PageError("schema")
         check_api_code(root.findtext("./header/resultCode"))
@@ -161,8 +225,10 @@ class MsitAdapter(Adapter):
                     if monotonic() >= deadline:
                         stop_reason = "time_limit"
                         break
+                    first_reason = missing[page]
+                    json_page_size = page_size if expected is not None and first_reason == PROVIDER_HTTP_ERROR else None
                     try:
-                        result = self._fetch_page(page)
+                        result = self._fetch_page(page, json_page_size=json_page_size)
                         recovered_ids = {_notice_id(row) for row in result[0]}
                         if len(recovered_ids) != len(result[0]) or recovered_ids & known_ids:
                             raise _PageError("duplicate_notices")
@@ -175,7 +241,7 @@ class MsitAdapter(Adapter):
                         missing[page] = str(error)
                         break
                     else:
-                        first_reason = missing.pop(page)
+                        del missing[page]
                         known_ids.update(recovered_ids)
                         print(f"[info] MsitAdapter: page {page} recovered ({first_reason})", file=sys.stderr)
 
