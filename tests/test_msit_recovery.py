@@ -1,0 +1,109 @@
+import io
+import tempfile
+import unittest
+from collections import Counter
+from contextlib import redirect_stderr
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
+
+from funded_project_research import collect, reliability
+from funded_project_research.adapters.msit import MsitAdapter
+from funded_project_research.store import Store
+
+
+TARGET = "funded_project_research.adapters.msit"
+PROVIDER_ERROR = (b"<OpenAPI_ServiceResponse><cmmMsgHeader>"
+                  b"<returnAuthMsg>HTTP_ERROR</returnAuthMsg><returnReasonCode>04</returnReasonCode>"
+                  b"</cmmMsgHeader></OpenAPI_ServiceResponse>")
+
+
+def _page_number(url):
+    return int(parse_qs(urlparse(url).query)["pageNo"][0])
+
+
+def _page_xml(page, total, notice=None):
+    item = (f"<item><viewUrl>https://example.test/{page}?nttSeqNo={notice or page}"
+            f"</viewUrl></item>")
+    return (f"<response><header><resultCode>00</resultCode></header><body>"
+            f"<items>{item}</items><pageNo>{page}</pageNo>"
+            f"<totalCount>{total}</totalCount></body></response>").encode()
+
+
+class TestMsitPageRecovery(unittest.TestCase):
+    def test_provider_error_keeps_later_pages_and_appears_in_reliability_report(self):
+        def fetch(url):
+            page = _page_number(url)
+            return PROVIDER_ERROR if page == 330 else _page_xml(page, 334)
+
+        adapter = MsitAdapter(service_key="private-test-value")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "notices.db"
+            store = Store(str(db))
+            try:
+                with patch(f"{TARGET}.http_get", side_effect=fetch) as get, \
+                     patch.object(collect, "ADAPTERS", [lambda: adapter]), \
+                     redirect_stderr(io.StringIO()) as log:
+                    rows = collect.collect_all(store)
+            finally:
+                store.close()
+            report = reliability.build_report(db, recheck=None)
+
+        attempts = Counter(_page_number(call.args[0]) for call in get.call_args_list)
+        self.assertEqual(attempts, {page: 2 if page == 330 else 1 for page in range(1, 335)})
+        self.assertEqual(len(rows), 333)
+        self.assertTrue(rows[-1].raw["viewUrl"].endswith("=334"))
+        self.assertEqual(report["sources"][0]["state"], "partial")
+        self.assertEqual(report["sources"][0]["pages"], 333)
+        self.assertEqual(report["sources"][0]["error_kind"], "page_330_provider_04")
+        self.assertIn("page_330_provider_04", log.getvalue())
+        self.assertNotIn("private-test-value", log.getvalue())
+
+    def test_recovery_runs_after_later_pages_and_requires_unique_notice_ids(self):
+        for returned_id, state, detail in [(2, "success", ""), (3, "partial", "page_2_duplicate_notices")]:
+            with self.subTest(returned_id=returned_id):
+                requests = []
+
+                def fetch(url):
+                    page = _page_number(url)
+                    requests.append(page)
+                    if page == 2:
+                        return PROVIDER_ERROR if requests.count(2) == 1 else _page_xml(page, 4, returned_id)
+                    return _page_xml(page, 4)
+
+                adapter = MsitAdapter(service_key="fixture")
+                with patch(f"{TARGET}.http_get", side_effect=fetch), redirect_stderr(io.StringIO()) as log:
+                    rows = adapter.collect()
+
+                self.assertEqual(requests[-2:], [4, 2])
+                self.assertEqual((adapter.collection_state, adapter.collection_error), (state, detail))
+                self.assertEqual([row.raw["viewUrl"].rsplit("=", 1)[-1] for row in rows],
+                                 ["1", "2", "3", "4"] if state == "success" else ["1", "3", "4"])
+                if state == "success":
+                    self.assertIn("page 2 recovered (provider_04)", log.getvalue())
+
+    def test_changed_total_and_recovery_request_budget_stay_visible(self):
+        def fetch(url):
+            page = _page_number(url)
+            return _page_xml(page, 5) if page in (2, 3) else _page_xml(page, 4)
+
+        adapter = MsitAdapter(service_key="fixture")
+        with patch(f"{TARGET}.http_get", side_effect=fetch) as get, \
+             patch(f"{TARGET}.MAX_RECOVERY_PAGES", 1):
+            rows = adapter.collect()
+
+        attempts = Counter(_page_number(call.args[0]) for call in get.call_args_list)
+        self.assertEqual(attempts, {1: 1, 2: 2, 3: 1, 4: 1})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(adapter.collection_state, "partial")
+        self.assertEqual(adapter.collection_error, "page_2_total_changed, page_3_total_changed")
+
+    def test_elapsed_budget_stops_requesting_pages(self):
+        adapter = MsitAdapter(service_key="fixture")
+        with patch(f"{TARGET}.http_get", side_effect=lambda url: _page_xml(_page_number(url), 5)) as get, \
+             patch(f"{TARGET}.monotonic", side_effect=[0, 1, 721]):
+            rows = adapter.collect()
+
+        self.assertCountEqual([_page_number(call.args[0]) for call in get.call_args_list], [1, 2, 3])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("partial", "time_limit"))
