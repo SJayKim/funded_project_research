@@ -49,7 +49,11 @@ class TestMsitPageRecovery(unittest.TestCase):
     def test_provider_error_keeps_later_pages_and_appears_in_reliability_report(self):
         def fetch(url):
             page = _page_number(url)
-            return PROVIDER_ERROR if page == 330 else _page_xml(page, 334)
+            if page == 330:
+                return PROVIDER_ERROR
+            if parse_qs(urlparse(url).query).get("returnType") == ["json"]:
+                return _page_json(page, 334)
+            return _page_xml(page, 334)
 
         adapter = MsitAdapter(service_key="private-test-value")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -89,13 +93,15 @@ class TestMsitPageRecovery(unittest.TestCase):
                             self.assertEqual(params["numOfRows"], ["1"])
                             return _page_json(page, 4, returned_id)
                         return PROVIDER_ERROR
+                    if requested_format == "json":
+                        return _page_json(page, 4)
                     return _page_xml(page, 4)
 
                 adapter = MsitAdapter(service_key="fixture")
                 with patch(f"{TARGET}.http_get", side_effect=fetch), redirect_stderr(io.StringIO()) as log:
                     rows = adapter.collect()
 
-                self.assertEqual(requests[-2:], [(4, "xml"), (2, "json")])
+                self.assertEqual(requests[-2:], [(4, "json"), (2, "json")])
                 self.assertEqual((adapter.collection_state, adapter.collection_error), (state, detail))
                 self.assertEqual([row.raw["viewUrl"].rsplit("=", 1)[-1] for row in rows],
                                  ["1", "2", "3", "4"] if state == "success" else ["1", "3", "4"])
@@ -105,6 +111,32 @@ class TestMsitPageRecovery(unittest.TestCase):
                     self.assertEqual(rows[1].raw["pressDt"], "2020-01-02")
                     self.assertEqual(rows[1].raw["files"],
                                      [{"fileName": "공고문.hwpx", "fileUrl": "https://example.test/file"}])
+
+    def test_multiple_later_xml_errors_do_not_exhaust_recovery_slots(self):
+        requests = []
+
+        def fetch(url):
+            params = parse_qs(urlparse(url).query)
+            page = int(params["pageNo"][0])
+            requested_format = params.get("returnType", ["xml"])[0]
+            requests.append((page, requested_format))
+            if requested_format == "json":
+                return _page_json(page, 7)
+            if page in (2, 4, 5, 6, 7):
+                return PROVIDER_ERROR
+            return _page_xml(page, 7)
+
+        adapter = MsitAdapter(service_key="fixture")
+        with patch(f"{TARGET}.http_get", side_effect=fetch), \
+             patch(f"{TARGET}.MAX_RECOVERY_PAGES", 1):
+            rows = adapter.collect()
+
+        self.assertCountEqual(requests, [(1, "xml"), (2, "xml"), (3, "xml"),
+                                         (4, "json"), (5, "json"), (6, "json"), (7, "json"),
+                                         (2, "json")])
+        self.assertEqual([row.raw["viewUrl"].rsplit("=", 1)[-1] for row in rows],
+                         [str(page) for page in range(1, 8)])
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("success", ""))
 
     def test_json_fallback_rejects_wrong_page_or_size(self):
         for returned_page, returned_size, reason in [

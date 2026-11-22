@@ -1,4 +1,4 @@
-"""과기정통부 R&D 공고 (data.go.kr 15074634). 기본 XML, HTTP_ERROR에서 JSON 재조회.
+"""과기정통부 R&D 공고 (data.go.kr 15074634). XML에서 HTTP_ERROR가 나면 JSON 사용.
 
 마감일 필드 없음(pressDt 게시일만) → 신규 알림만. 고유키는 viewUrl의 nttSeqNo.
 """
@@ -180,6 +180,7 @@ class MsitAdapter(Adapter):
         pages = {1: first}
         missing: dict[int, str] = {}
         stop_reason = ""
+        json_page_size = None
 
         def accept(page: int, result: tuple[list[dict], int | None]) -> bool:
             rows, total = result
@@ -201,12 +202,19 @@ class MsitAdapter(Adapter):
                     stop_reason = "time_limit"
                     break
                 batch = range(start, min(start + 2, last_page + 1))
-                results = [(page, pool.submit(self._fetch_page, page)) for page in batch]
+                results = [(page, pool.submit(self._fetch_page, page, json_page_size=json_page_size))
+                           for page in batch]
                 for page, future in results:
                     try:
                         reached_end = not accept(page, future.result()) or reached_end
                     except _PageError as error:
                         missing[page] = str(error)
+                        # Multiple later XML pages can fail with the same provider error.
+                        # Use the verified offset and total for subsequent JSON requests.
+                        if json_page_size is None and expected is not None and missing[page] == PROVIDER_HTTP_ERROR:
+                            json_page_size = page_size
+                            print(f"[info] MsitAdapter: using JSON after page {page} ({PROVIDER_HTTP_ERROR})",
+                                  file=sys.stderr)
                     except (URLError, TimeoutError):
                         missing[page] = "network"
                     except SourceError as error:
@@ -226,7 +234,6 @@ class MsitAdapter(Adapter):
                         stop_reason = "time_limit"
                         break
                     first_reason = missing[page]
-                    json_page_size = page_size if expected is not None and first_reason == PROVIDER_HTTP_ERROR else None
                     try:
                         result = self._fetch_page(page, json_page_size=json_page_size)
                         recovered_ids = {_notice_id(row) for row in result[0]}
