@@ -55,20 +55,68 @@ jobs:
         if: ${{ inputs.check_source_health }}
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
-          KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
-          BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
-          LLM_ENABLED: "off"
         run: |
           python - <<'PY'
           import json
-          from contextlib import closing
-          from funded_project_research.collect import collect_all
-          from funded_project_research.store import Store
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from urllib.error import HTTPError
+          from funded_project_research.adapters.base import build_url, http_get
+          from funded_project_research.adapters.msit import BASE
 
-          with closing(Store(":memory:")) as store:
-              collect_all(store)
-              sources = store.source_health()
-          print(json.dumps(sources, ensure_ascii=False, indent=2))
-          if any(source["state"] != "success" for source in sources):
-              raise SystemExit(2)
+          def digits(value):
+              text = str(value)
+              return text if re.fullmatch(r"[0-9]{1,12}", text) else None
+
+          def summarize(payload):
+              if payload.lstrip().startswith(b"{"):
+                  root = json.loads(payload)
+                  if "OpenAPI_ServiceResponse" in root:
+                      header = root["OpenAPI_ServiceResponse"].get("cmmMsgHeader", {})
+                      return {"format": "json", "provider_code": digits(header.get("returnReasonCode"))}
+                  response = root["response"]
+                  body = response.get("body") or {}
+                  items = body.get("items") or []
+                  if isinstance(items, dict):
+                      items = items.get("item") or []
+                  if isinstance(items, dict):
+                      items = [items]
+                  urls = [item.get("viewUrl", "") for item in items]
+                  fields = {"format": "json",
+                            "result_code": digits(response.get("header", {}).get("resultCode")),
+                            "total": digits(body.get("totalCount")),
+                            "actual_page": digits(body.get("pageNo")),
+                            "actual_size": digits(body.get("numOfRows"))}
+              else:
+                  root = ET.fromstring(payload)
+                  if root.tag == "OpenAPI_ServiceResponse":
+                      return {"format": "xml", "provider_code": digits(root.findtext(".//returnReasonCode"))}
+                  urls = [item.findtext("viewUrl") or "" for item in root.findall(".//items/item")]
+                  fields = {"format": "xml",
+                            "result_code": digits(root.findtext(".//resultCode")),
+                            "total": digits(root.findtext(".//totalCount")),
+                            "actual_page": digits(root.findtext(".//pageNo")),
+                            "actual_size": digits(root.findtext(".//numOfRows"))}
+              ids = [match.group(1) if (match := re.search(r"nttSeqNo=([0-9]{1,12})(?:\D|$)", url))
+                     else None for url in urls]
+              return {**fields, "count": len(urls), "notice_ids": ids}
+
+          cases = [(329, 10, "xml"), (330, 10, "xml"), (331, 10, "xml"),
+                   (330, 10, "json"), (658, 5, "xml"), (659, 5, "xml"),
+                   (660, 5, "xml"), (661, 5, "xml"), (330, 100, None)]
+          for page, size, fmt in cases:
+              result = {"requested_page": page, "requested_size": size, "requested_format": fmt}
+              params = {"pageNo": page, "numOfRows": size}
+              if fmt:
+                  params["returnType"] = fmt
+              try:
+                  payload = http_get(build_url(BASE, os.environ["SERVICE_KEY"], params), timeout=12)
+                  result["http_outcome"] = "2xx"
+                  result.update(summarize(payload))
+              except HTTPError as error:
+                  result["http_error"] = error.code
+              except Exception as error:
+                  result["error_type"] = type(error).__name__
+              print(json.dumps(result), flush=True)
           PY
