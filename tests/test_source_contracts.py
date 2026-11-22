@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from funded_project_research.adapters.iris import IrisAdapter, parse_rows
+from funded_project_research.adapters.kstartup import KStartupAdapter
 from funded_project_research.adapters.nara import NaraAdapter
 from funded_project_research.adapters.msit import MsitAdapter
 from funded_project_research.status import KST
@@ -17,6 +18,13 @@ class TestSourceContracts(unittest.TestCase):
     ROW = '''<span class="inst_title">기관</span>
     <a onclick="f_bsnsAncmListForm_view('024439','2026','S1','1','1','2026/11/03','2026/11/16')">공고</a>
     <span class="period">2026/11/03 ~ 2026/11/16</span>'''
+
+    def test_kstartup_uses_a_dedicated_key_without_replacing_the_shared_key(self):
+        with patch.dict('os.environ', {'SERVICE_KEY': 'shared', 'KSTARTUP_SERVICE_KEY': 'dedicated'}, clear=True):
+            self.assertEqual(KStartupAdapter().service_key, 'dedicated')
+            self.assertEqual(KStartupAdapter(service_key='explicit').service_key, 'explicit')
+        with patch.dict('os.environ', {'SERVICE_KEY': 'shared', 'KSTARTUP_SERVICE_KEY': ''}, clear=True):
+            self.assertEqual(KStartupAdapter().service_key, 'shared')
 
     def test_iris_ignores_jsrender_template_and_does_not_fetch_its_detail(self):
         template = self.ROW.replace('024439', '{{:ancmId}}')
