@@ -217,6 +217,7 @@ class TestDerivedInformation(unittest.TestCase):
 class TestOfficialRecheck(unittest.TestCase):
     BIZ = '<span class="s_title">신청기간</span><div class="txt">2025.03.10 ~ 2025.04.09</div>'
     CAMP = '<p id="rcptPeriod">2026-09-28 ~ 2026-11-06 23:59</p><p id="aplyPeriod">2026.09.28(월) 00:00 ~ 2026.11.06(금) 23:59 까지</p>'
+    BIZ_CONDITIONAL = '<span class="s_title">신청기간</span><div class="txt"><span>예산 소진시까지</span></div>'
 
     def test_only_structured_period_is_accepted_and_conflicts_rejected(self):
         self.assertEqual(recheck.application_period("bizinfo", self.BIZ)[:2], ("2025-03-10", "2025-04-09"))
@@ -224,6 +225,105 @@ class TestOfficialRecheck(unittest.TestCase):
         for text in ['<p>추천 공고 2025.03.10 ~ 2025.04.09</p>', self.CAMP.replace('2026-11-06', '2026-11-15')]:
             with self.assertRaises(ValueError):
                 recheck.application_period("kstartup", text)
+
+    def test_explicit_localized_dates_and_range_separators(self):
+        for value in ("2026. 11. 2.(월) ～ 2026.11.9.(월) 18:00까지",
+                      "2026년 11월 2일부터 2026년 11월 9일 18:00까지",
+                      "20261102 – 2026/11/09 18:00"):
+            with self.subTest(value=value):
+                html = f'<p id="aplyPeriod">{value}</p>'
+                self.assertEqual(recheck.application_period("kstartup", html),
+                                 ("2026-11-02", "2026-11-09 18:00", value))
+
+    def test_classifies_non_fixed_structured_fields_and_ignores_other_dates(self):
+        for body, reason, evidence in (
+            ('<p>추천 공고 2026.11.02 ~ 2026.11.09</p><!--' + self.BIZ + '-->', "period_missing", ""),
+            ('<span class="s_title">신청기간</span><div class="txt"> - </div>', "period_missing", ""),
+            (self.BIZ_CONDITIONAL, "period_conditional", "예산 소진시까지"),
+            (self.BIZ_CONDITIONAL.replace("예산 소진시까지", "상시 접수"), "period_conditional", "상시 접수"),
+            (self.BIZ_CONDITIONAL.replace("예산 소진시까지", "모집 완료시"), "period_conditional", "모집 완료시"),
+            (self.BIZ_CONDITIONAL.replace("예산 소진시까지", "첨부 공고문 참조"), "period_attachment", "첨부 공고문 참조"),
+            (self.BIZ_CONDITIONAL.replace("예산 소진시까지", "세부사업별 상이"), "period_varies", "세부사업별 상이"),
+            (self.BIZ_CONDITIONAL.replace("예산 소진시까지", "차수별 상이"), "period_varies", "차수별 상이"),
+            (self.BIZ_CONDITIONAL.replace("예산 소진시까지", "접수방법별 상이"), "period_varies", "접수방법별 상이"),
+            (self.BIZ.replace("2025.04.09", "2025.04.31"), "period_invalid", "2025.03.10 ~ 2025.04.31"),
+        ):
+            with self.subTest(reason=reason, body=body), self.assertRaisesRegex(recheck.PeriodError, reason) as exc:
+                recheck.application_period("bizinfo", body)
+            self.assertEqual(exc.exception.evidence, evidence)
+
+    def test_disagreed_official_fields_are_a_conflict(self):
+        for html in (self.CAMP.replace("00:00 ~", "00:01 ~") + '<p id="aplyPeriod">2026.09.28 00:00 ~ 2026.11.06 23:59</p>',
+                     self.CAMP.replace("2026-11-06", "2026-11-07"),
+                     self.CAMP + '<p id="rcptPeriod">예산 소진시까지</p>'):
+            with self.subTest(html=html), self.assertRaisesRegex(recheck.PeriodError, "period_conflict"):
+                recheck.application_period("kstartup", html)
+
+    def test_conditional_check_reports_evidence_without_confirming_a_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "gov.db"
+            url = "https://www.bizinfo.go.kr/test?pblancId=PBLN_1"
+            rec = NoticeRecord("bizinfo", "PBLN_1", "AI 지원", url + "&key=fixture-secret", deadline="2026-11-19",
+                               verified_deadline="2026-11-19", verification_status="confirmed", verified_at="2026-11-11",
+                               deadline_raw="2026-11-19")
+            with closing(Store(str(db))) as store:
+                store.upsert(rec, "old")
+                store.commit()
+
+            checked = "2026-11-12T00:00:00Z"
+            with patch.object(recheck, "http_get", return_value=self.BIZ_CONDITIONAL.encode()), \
+                 patch.object(recheck, "utc_now", return_value=checked):
+                report = recheck.recheck(db, keys=[rec.key], apply=True)
+            self.assertEqual(report["results"], [{"key": rec.key, "url": url, "result": "unconfirmed",
+                "reason": "period_conditional", "evidence": "예산 소진시까지", "checked_at": checked,
+                "old_deadline": "2026-11-19"}])
+
+            now = datetime.fromisoformat(checked)
+            with closing(Store(str(db))) as store:
+                saved = store.load()[rec.key]
+                self.assertEqual((saved.deadline, saved.deadline_raw, saved.verified_deadline), ("", "2026-11-19", ""))
+                self.assertEqual((saved.verification_status, saved.period_condition), ("conditional", "예산 소진시까지"))
+                self.assertEqual(notice_state(saved, now), "unknown")
+                self.assertEqual(store.conn.execute("SELECT COUNT(*) FROM verifications").fetchone()[0], 0)
+
+                # 목록이 재수집돼도 본문의 조건을 확정 일자로 덮어쓰지 않는다.
+                collect.run(store, [rec], now, send=False)
+                self.assertEqual(store.load()[rec.key].period_condition, "예산 소진시까지")
+                self.assertEqual(store.load()[rec.key].deadline, "")
+            self.assertIn("예산 소진시까지", serve.render_page(serve.fetch_notices(str(db))))
+
+            # 이후 본문에서 고정 기간을 확인한 경우에만 날짜를 다시 저장한다.
+            with patch.object(recheck, "http_get", return_value=self.BIZ.encode()):
+                recheck.recheck(db, keys=[rec.key], apply=True)
+            with closing(Store(str(db))) as store:
+                saved = store.load()[rec.key]
+                self.assertEqual((saved.period_condition, saved.verification_status, saved.deadline), ("", "confirmed", "2025-04-09"))
+
+    def test_manual_review_invalidates_a_previously_confirmed_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "gov.db"
+            url = "https://www.bizinfo.go.kr/test?pblancId=PBLN_1"
+            checked = "2026-11-12T00:00:00Z"
+            for evidence, reason in (("세부사업별 상이", "period_varies"), ("첨부 공고문 참조", "period_attachment")):
+                with self.subTest(reason=reason):
+                    rec = NoticeRecord("bizinfo", "PBLN_1", "AI 지원", url, deadline="2026-11-19",
+                                       verified_deadline="2026-11-19", verification_status="confirmed",
+                                       verified_at="2026-11-11")
+                    with closing(Store(str(db))) as store:
+                        store.upsert(rec, "old")
+                        store.commit()
+                    html = self.BIZ_CONDITIONAL.replace("예산 소진시까지", evidence)
+                    with patch.object(recheck, "http_get", return_value=html.encode()), \
+                         patch.object(recheck, "utc_now", return_value=checked):
+                        report = recheck.recheck(db, keys=[rec.key], apply=True)
+                    self.assertEqual(report["results"][0]["reason"], reason)
+                    now = datetime.fromisoformat(checked)
+                    with closing(Store(str(db))) as store:
+                        collect.run(store, [rec], now, send=False)
+                        saved = store.load()[rec.key]
+                        self.assertEqual((saved.verification_status, saved.period_condition), ("manual_review", evidence))
+                        self.assertEqual((saved.deadline, saved.verified_deadline), ("", ""))
+                        self.assertEqual(notice_state(saved, now), "unknown")
 
     def test_dry_run_and_repeat_apply_preserve_records_and_alerts(self):
         with tempfile.TemporaryDirectory() as tmp:

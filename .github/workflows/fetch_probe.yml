@@ -6,15 +6,25 @@ name: fetch-probe
 
 on:
   workflow_dispatch:
+    inputs:
+      check_source_health:
+        description: "모든 수집 어댑터를 운영 인증으로 읽기 전용 검증"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   probe:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - name: Probe detail-page fetch
+        if: ${{ !inputs.check_source_health }}
         run: |
           python - <<'PY'
           import urllib.request, ssl, re, html
@@ -36,4 +46,29 @@ jobs:
                   print(f'[{name}] OK status={r.status} bytes={len(body)} visible={visible}')
               except Exception as e:
                   print(f'[{name}] FAIL {type(e).__name__}: {e}')
+          PY
+
+      - uses: actions/checkout@v4
+        if: ${{ inputs.check_source_health }}
+
+      - name: Check production sources without writing data
+        if: ${{ inputs.check_source_health }}
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
+          BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
+          LLM_ENABLED: "off"
+        run: |
+          python - <<'PY'
+          import json
+          from contextlib import closing
+          from funded_project_research.collect import collect_all
+          from funded_project_research.store import Store
+
+          with closing(Store(":memory:")) as store:
+              collect_all(store)
+              sources = store.source_health()
+          print(json.dumps(sources, ensure_ascii=False, indent=2))
+          if any(source["state"] != "success" for source in sources):
+              raise SystemExit(2)
           PY

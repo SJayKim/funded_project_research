@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Collection
 from datetime import date, datetime
 from urllib.error import HTTPError, URLError
 
@@ -20,7 +21,7 @@ from .adapters.msit import MsitAdapter
 from .adapters.nara import NaraAdapter
 from .dedupe import dedupe
 from .normalize import NoticeRecord, content_basis, normalize
-from .status import KST, notice_state, utc_now
+from .status import KST, NONFIXED_PERIOD_STATES, notice_state, utc_now
 from .store import Store
 
 ADAPTERS = [KStartupAdapter, BizinfoAdapter, MsitAdapter, NaraAdapter, IrisAdapter]
@@ -69,17 +70,29 @@ def collect_all(store: Store | None = None) -> list[RawNotice]:
     return raws
 
 
-def run(store: Store, current: list[NoticeRecord], today: date, send=True) -> dict:
+def run(
+    store: Store, current: list[NoticeRecord], today: date, send=True,
+    *, missing_iris_details: Collection[str] = (),
+) -> dict:
     """순수 파이프라인(어댑터 제외). 테스트가 current를 직접 주입한다."""
     previous = store.load()
     now_iso = utc_now()
+
+    if missing_iris_details:
+        for rec in current:
+            if rec.key in missing_iris_details and rec.key in previous:
+                rec.attachments = previous[rec.key].attachments
 
     # 전건 카테고리/기술여부 결정(결정적 키워드 매칭).
     for rec in current:
         rec.category, rec.is_tech = classify.classify(rec)
         rec.source_checked_at = now_iso
         prev = previous.get(rec.key)
-        if prev and prev.verified_at:
+        if prev and prev.url == rec.url and prev.verification_status in NONFIXED_PERIOD_STATES:
+            rec.deadline = rec.starts_at = rec.verified_deadline = ""
+            rec.verification_status, rec.period_condition = prev.verification_status, prev.period_condition
+            rec.verified_at = prev.verified_at
+        elif prev and prev.verified_at and prev.verification_status not in NONFIXED_PERIOD_STATES:
             rec.verified_at, rec.verified_deadline = prev.verified_at, prev.verified_deadline
             if rec.deadline and (rec.deadline == prev.verified_deadline or
                                  len(rec.deadline) == 10 and rec.deadline == prev.verified_deadline[:10]):
@@ -214,8 +227,17 @@ def main() -> None:
         if unhealthy:
             raise SystemExit(2)
         return
-    current = dedupe([normalize(r) for r in raws])
-    summary = run(store, current, datetime.now(KST), send=send)
+    normalized = []
+    iris_detail_missing = {}
+    for raw in raws:
+        record = normalize(raw)
+        normalized.append(record)
+        if raw.source == "iris":
+            # dedupe retains the first record for a source ID.
+            iris_detail_missing.setdefault(record.key, "attachments" not in raw.raw)
+    current = dedupe(normalized)
+    summary = run(store, current, datetime.now(KST), send=send,
+                  missing_iris_details={key for key, missing in iris_detail_missing.items() if missing})
     # base 스냅샷 확정 후 2단계 추출(별도 트랜잭션. 터져도 일일 스냅샷·메일 안전).
     enr = enrich(store)
     unhealthy = any(s["state"] in ("partial", "failed") for s in store.source_health())

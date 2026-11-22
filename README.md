@@ -173,6 +173,7 @@ HTML에는 아직 전체 공고 데이터가 포함됩니다. 50건씩 표시하
 필수 또는 선택 환경변수는 다음과 같습니다.
 
 - `SERVICE_KEY`: 공공데이터 API 호출용 서비스 키
+- `KSTARTUP_SERVICE_KEY`: K-Startup 활용 승인을 별도 계정에서 받은 경우의 서비스 키. 미설정 시 `SERVICE_KEY`를 사용합니다.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_TO`: 이메일 알림 설정
 - `MAIL_FROM`: 발신자 주소, 미설정 시 `SMTP_USER` 사용
 - `ANTHROPIC_API_KEY`: 요약/상세 추출용 API 키, 없으면 요약은 fallback으로 처리되고 상세 추출은 생략

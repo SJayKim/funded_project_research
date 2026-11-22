@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import re
 import time
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 
 from .base import Adapter, RawNotice, SourceError, http_post
+from .retry import (
+    CONSECUTIVE_FAILURE_LIMIT, REQUEST_ERRORS, RequestTimeLimit, SourceRequests,
+    request_error_kind, transient,
+)
 
 BASE = "https://www.iris.go.kr/contents"
 LIST_URL = f"{BASE}/retrieveBsnsAncmListView.do"
@@ -28,17 +32,6 @@ _TOTAL_PAGES = re.compile(r'current_page">[^<]*<strong>\d+</strong>/(\d+)')
 _ANCM_NO = re.compile(r"<em>공고번호</em><span>([^<]*)</span>")
 # downloadAtchFile('docId','fileId','fileNm','fileSz') — 3번째 인자가 파일명.
 _ATCH = re.compile(r"downloadAtchFile\('[^']*','[^']*','([^']*)'")
-
-
-def _fetch_html(url: str, fields: dict) -> str:
-    # These POST endpoints only retrieve pages; retry a connection failure once.
-    try:
-        raw = http_post(url, fields)
-    except HTTPError:
-        raise
-    except (URLError, TimeoutError):
-        raw = http_post(url, fields)
-    return raw.decode("utf-8")
 
 
 def parse_rows(html: str) -> list[dict]:
@@ -82,35 +75,69 @@ class IrisAdapter(Adapter):
 
     def collect(self) -> list[RawNotice]:
         out = self.begin()
-        first = _fetch_html(LIST_URL, {"pageIndex": 1})
+        requests = SourceRequests(self.source)
+        first = self._fetch_list(requests, 1)
         m = _TOTAL_PAGES.search(first)
         rows = parse_rows(first)
         if not m or not rows:
             raise SourceError("unverified_empty_page")
         total = min(int(m.group(1)), self.max_pages)
         self.add_page(rows, "ancmId")
+        if int(m.group(1)) > self.max_pages:
+            self.capped()
+        consecutive_failures = 0
         for page in range(2, total + 1):
-            html = _fetch_html(LIST_URL, {"pageIndex": page})
+            try:
+                html = self._fetch_list(requests, page)
+            except REQUEST_ERRORS as error:
+                if not isinstance(error, RequestTimeLimit) and not transient(error):
+                    raise
+                self.collection_state = "partial"
+                self.collection_error = f"list_{request_error_kind(error)}"
+                consecutive_failures += 1
+                if isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                    break
+                continue
+            consecutive_failures = 0
             page_rows = parse_rows(html)
             if not page_rows:
                 raise SourceError("unverified_empty_page")
             self.add_page(page_rows, "ancmId")
-        if int(m.group(1)) > self.max_pages:
-            self.capped()
 
         if self.detail:
-            for rec in out:
-                r = rec.raw
-                try:
-                    html = _fetch_html(VIEW_URL, {
-                        "ancmId": r["ancmId"], "bsnsYy": r["bsnsYy"],
-                        "bsnsYyDetail": r["bsnsYy"], "sorgnBsnsCd": r["sorgnBsnsCd"],
-                        "bsnsAncmSn": r["bsnsAncmSn"],
-                    })
-                    r.update(parse_detail(html))
-                except Exception:
-                    self.collection_state, self.collection_error = "partial", "detail_failed"
-                    break
-                time.sleep(self.interval)  # courteous: 상세 ~103 POST/실행 rate-limit 보호
+            self._collect_details(requests, out)
 
         return out
+
+    @staticmethod
+    def _fetch_list(requests: SourceRequests, page: int) -> str:
+        return requests.fetch("list", f"page={page}", http_post, LIST_URL, {"pageIndex": page}).decode("utf-8")
+
+    def _collect_details(self, requests: SourceRequests, rows: list[RawNotice]) -> None:
+        def fetch_detail(fields, timeout):
+            html = http_post(VIEW_URL, fields, timeout=timeout).decode("utf-8")
+            detail = parse_detail(html)
+            if not any(detail.values()):
+                raise SourceError("unverified_empty_detail")
+            return detail
+
+        consecutive_failures = 0
+        for index, rec in enumerate(rows, start=1):
+            row = rec.raw
+            notice_id = row["ancmId"]
+            target = f"notice={notice_id}" if notice_id.isascii() and notice_id.isdecimal() else f"row={index}"
+            fields = {key: row[key] for key in ("ancmId", "bsnsYy", "sorgnBsnsCd", "bsnsAncmSn")}
+            fields["bsnsYyDetail"] = row["bsnsYy"]
+            try:
+                row.update(requests.fetch("detail", target, fetch_detail, fields))
+                consecutive_failures = 0
+            except REQUEST_ERRORS as error:
+                self.collection_state = "partial"
+                if self.collection_error in ("", "page_limit"):
+                    self.collection_error = f"detail_{request_error_kind(error)}"
+                consecutive_failures += 1
+                if (isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT
+                        or isinstance(error, HTTPError) and error.code in (401, 403, 429)):
+                    break
+            if index < len(rows):
+                time.sleep(self.interval)

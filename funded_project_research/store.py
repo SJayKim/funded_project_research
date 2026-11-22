@@ -22,7 +22,7 @@ NEW_COLUMNS = (
     "funding_amount", "eligibility", "required_docs",
     "key_dates", "extracted_from", "extraction_status",
     "deadline_raw", "starts_at", "published_at", "source_checked_at",
-    "verified_at", "verified_deadline", "verification_status",
+    "verified_at", "verified_deadline", "verification_status", "period_condition",
     "summary_basis", "extraction_basis", "extracted_at",
 )
 

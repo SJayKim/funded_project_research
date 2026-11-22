@@ -22,6 +22,10 @@ on:
         description: "출처 접근 상태와 원문만 점검 (공고 수집 적재·알림·LLM 생략)"
         type: boolean
         default: false
+      recheck_keys:
+        description: "원문 재확인 공고 키 (쉼표로 구분, 최대 100건)"
+        type: string
+        default: ""
 
 # 예약/수동/브랜치 실행 모두 같은 DB를 쓰므로 하나의 그룹에서 직렬화한다.
 concurrency:
@@ -85,6 +89,7 @@ jobs:
         continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -113,6 +118,7 @@ jobs:
         continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
           LLM_ENABLED: "off"
         run: python -m funded_project_research.collect --health-only
@@ -121,7 +127,25 @@ jobs:
         id: recheck
         continue-on-error: true
         timeout-minutes: 20
-        run: python -m funded_project_research.recheck --apply --limit 100 --report recheck-report.json
+        env:
+          RECHECK_KEYS: ${{ inputs.recheck_keys }}
+        run: |
+          args=()
+          if [[ -n "$RECHECK_KEYS" ]]; then
+            IFS=, read -r -a notice_keys <<< "$RECHECK_KEYS"
+            if (( ${#notice_keys[@]} > 100 )); then
+              echo 'At most 100 notice keys can be rechecked.' >&2
+              exit 1
+            fi
+            for key in "${notice_keys[@]}"; do
+              if [[ ! "$key" =~ ^(bizinfo:PBLN_[0-9]+|kstartup:[0-9]+)$ ]]; then
+                echo 'Invalid recheck notice key.' >&2
+                exit 1
+              fi
+              args+=(--key "$key")
+            done
+          fi
+          python -m funded_project_research.recheck --apply --limit 100 --report recheck-report.json "${args[@]}"
 
       - name: Audit all records and persist reliability report
         id: reliability

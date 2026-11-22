@@ -370,7 +370,9 @@ function addDetail(detail, d, query, close) {
     const p = element('p'); const link = element('a', '', '발췌 출처 확인 ↗');
     link.href = from; link.target = '_blank'; link.rel = 'noopener noreferrer'; p.append(link); cell.append(p);
   }
-  cell.append(element('p', '', '출처 응답 확인: ' + displayTime(d.source_checked_at) + ' · 원문 신청기간 확인: ' + displayTime(d.verified_at)));
+  if (d.period_condition) cell.append(element('p', '', '원문 신청기간 ' + d.period_condition + ' · 확인 시각 ' + displayTime(d.verified_at)));
+  cell.append(element('p', '', '출처 응답 확인: ' + displayTime(d.source_checked_at)
+    + (d.period_condition ? '' : ' · 원문 신청기간 확인: ' + displayTime(d.verified_at))));
   if ((d.summary && !d.summary_current) || (d.extraction_status && !d.extraction_current)) cell.append(element('p', '', '현재 공고와의 일치가 확인되지 않은 요약·발췌는 표시하지 않습니다.'));
   cell.append(element('p', '', '요약과 발췌는 공고 원문의 일부입니다. 신청 전 최신 원문과 자격을 확인하세요.'));
   const button = element('button', 'quiet', '상세 닫기'); button.type = 'button'; button.onclick = close;
@@ -443,7 +445,8 @@ function renderHealth(now) {
       + ' · 날짜·형식 검사 ' + AUDIT.counts.total.toLocaleString() + '건 / 원문 ' + AUDIT.official.confirmed + '건 확인';
   $('check-detail').textContent = AUDIT ? '기업마당·K-Startup의 진행 중·상태 미확인 공고: 최근 24시간 원문 신청기간 확인 '
     + (AUDIT.counts.official_fresh || 0).toLocaleString() + '/' + (AUDIT.counts.supported_active || 0).toLocaleString() + '건 · 14일 내 마감 중 원문 미확인 '
-    + (AUDIT.counts.near_deadline_unverified || 0).toLocaleString() + '건 · 이번 원문 조회 미확인 ' + AUDIT.official.unconfirmed + '건' : '';
+    + (AUDIT.counts.near_deadline_unverified || 0).toLocaleString() + '건 · 이번 원문 조회 미확인 ' + AUDIT.official.unconfirmed + '건'
+    + (AUDIT.official.unconfirmed_by_reason?.period_conditional ? ' (조건부 ' + AUDIT.official.unconfirmed_by_reason.period_conditional + '건 포함)' : '') : '';
   const el = $('dist'); el.textContent = '';
   for (const [source, name] of Object.entries(SRC)) {
     const h = HEALTH.find(x => x.source === source);

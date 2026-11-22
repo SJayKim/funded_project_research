@@ -111,7 +111,9 @@ def build_report(db: Path, recheck: dict | None, now: datetime | None = None) ->
     if not valid_recheck:
         issues.append({"code": "recheck_missing_or_invalid"})
         results = []
-    failures = sum(r["result"] != "confirmed" for r in results)
+    failure_reasons = Counter(r.get("reason") if isinstance(r.get("reason"), str) else "unknown"
+                              for r in results if r["result"] != "confirmed")
+    failures = sum(failure_reasons.values())
     if failures:
         issues.append({"code": "official_unconfirmed", "count": failures})
     run_id = os.environ.get("GITHUB_RUN_ID", "local-" + uuid.uuid4().hex) + ":" + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
@@ -120,6 +122,7 @@ def build_report(db: Path, recheck: dict | None, now: datetime | None = None) ->
             "counts": dict(counts), "sources": health, "issues": issues,
             "official": {"selected": len(results), "confirmed": len(results) - failures,
                          "unconfirmed": failures, "remaining": (recheck or {}).get("remaining_candidates", 0),
+                         "unconfirmed_by_reason": dict(sorted(failure_reasons.items())),
                          "changed": sum(r["result"] == "confirmed" and r["old_deadline"] != r["new_deadline"] for r in results)}}
 
 
@@ -141,6 +144,9 @@ def markdown_report(report: dict) -> str:
     lines += [f"| {r['code']} | {r.get('source', r.get('count', ''))} |" for r in report["issues"]]
     if not report["issues"]:
         lines.append("| 설정된 자동 검사 통과 | 전체 공고의 의미 정확성을 보증하지 않음 |")
+    if reasons := report["official"].get("unconfirmed_by_reason"):
+        lines += ["", "원문 미확인 사유별 건수"]
+        lines += [f"- {reason} {count}건" for reason, count in reasons.items()]
     return "\n".join(lines) + "\n"
 
 
