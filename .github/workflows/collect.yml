@@ -85,6 +85,7 @@ jobs:
         continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -113,6 +114,7 @@ jobs:
         continue-on-error: true
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
           LLM_ENABLED: "off"
         run: python -m funded_project_research.collect --health-only
