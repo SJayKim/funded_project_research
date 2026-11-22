@@ -126,6 +126,9 @@ class IrisAdapter(Adapter):
             row = rec.raw
             notice_id = row["ancmId"]
             target = f"notice={notice_id}" if notice_id.isascii() and notice_id.isdecimal() else f"row={index}"
+            sequence = row["bsnsAncmSn"]
+            if sequence.isascii() and sequence.isdecimal():
+                target += f" sequence={sequence}"
             fields = {key: row[key] for key in ("ancmId", "bsnsYy", "sorgnBsnsCd", "bsnsAncmSn")}
             fields["bsnsYyDetail"] = row["bsnsYy"]
             try:
