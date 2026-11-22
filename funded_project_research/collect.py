@@ -88,7 +88,11 @@ def run(
         rec.category, rec.is_tech = classify.classify(rec)
         rec.source_checked_at = now_iso
         prev = previous.get(rec.key)
-        if prev and prev.verified_at:
+        if prev and prev.url == rec.url and prev.verification_status == "conditional":
+            rec.deadline = rec.starts_at = ""
+            rec.verification_status, rec.period_condition = "conditional", prev.period_condition
+            rec.verified_at = prev.verified_at
+        elif prev and prev.verified_at and prev.verification_status != "conditional":
             rec.verified_at, rec.verified_deadline = prev.verified_at, prev.verified_deadline
             if rec.deadline and (rec.deadline == prev.verified_deadline or
                                  len(rec.deadline) == 10 and rec.deadline == prev.verified_deadline[:10]):

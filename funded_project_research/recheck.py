@@ -9,7 +9,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from .adapters.base import http_get
 from .extract import html_to_text
@@ -20,6 +20,20 @@ from .store import Store
 KNOWN_KEYS = ("bizinfo:PBLN_000000000105965", "kstartup:179430", "kstartup:175817")
 RECHECK_HOURS = 24
 RETRY_HOURS = 6
+CONDITIONAL_PERIOD = re.compile(
+    r"(?:예산\s*소진\s*(?:시\s*)?까지|(?:모집|접수)\s*(?:완료|마감)\s*시(?:까지)?"
+    r"|상시\s*(?:접수|모집|신청)|선착순\s*(?:접수|모집|마감)?)"
+)
+ATTACHMENT_PERIOD = re.compile(
+    r"(?:(?:첨부|첨부\s*파일|별첨|붙임)\s*(?:파일|공고문|공고)?|공고문)\s*(?:을\s*)?(?:참조|참고|확인)"
+)
+VARIABLE_PERIOD = re.compile(r"(?:세부\s*사업|차수|접수\s*방법)\s*별\s*상이")
+
+
+class PeriodError(ValueError):
+    def __init__(self, reason: str, evidence: str = ""):
+        super().__init__(reason)
+        self.evidence = evidence
 
 
 def select_candidates(records: dict, attempts: dict, now: datetime, limit: int) -> tuple[list, int]:
@@ -55,31 +69,64 @@ def select_candidates(records: dict, attempts: dict, now: datetime, limit: int) 
     return chosen, len(priority) + len(other)
 
 
+def _period_date(value: str) -> str:
+    localized = re.match(
+        r"^(\d{4})(?:\s*[./-]\s*|\s*년\s*)(\d{1,2})(?:\s*[./-]\s*|\s*월\s*)"
+        r"(\d{1,2})(?:일|\.)?(?=$|[ T])", value,
+    )
+    if localized:
+        year, month, day = map(int, localized.groups())
+        value = f"{year:04d}-{month:02d}-{day:02d}" + value[localized.end():]
+    return parse_deadline(value)
+
+
+def _fixed_period(value: str) -> tuple[str, str]:
+    normalized = re.sub(r"\s*\([월화수목금토일](?:요일)?\)\s*", " ", value)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    parts = re.split(r"\s*[~～∼]\s*|\s+[-–—]\s+|\s*부터\s*", normalized)
+    if len(parts) == 2:
+        start = _period_date(parts[0].strip())
+        end = _period_date(parts[1].removesuffix("까지").strip())
+        begin, close = instant(start), instant(end, end=True)
+        if begin and close and begin < close:
+            return start, end
+    raise PeriodError("period_invalid", value)
+
+
 def application_period(source: str, html: str) -> tuple[str, str, str]:
     """위치가 명확한 필드만 읽는다. 본문·추천 공고의 임의 날짜는 사용하지 않는다."""
+    html = re.sub(r"<!--.*?-->|<script\b[^>]*>.*?</script\s*>", "", html, flags=re.S | re.I)
     if source == "kstartup":
-        chunks = re.findall(r'<p\b[^>]*\bid=["\'](?:aplyPeriod|rcptPeriod)["\'][^>]*>(.*?)</p>', html, re.S | re.I)
+        chunks = re.findall(r'<p\b[^>]*\sid=["\'](?:aplyPeriod|rcptPeriod)["\'][^>]*>(.*?)</p>', html, re.S | re.I)
     elif source == "bizinfo":
-        chunks = re.findall(r'<span\b[^>]*class=["\']s_title["\'][^>]*>\s*신청기간\s*</span>\s*<div\b[^>]*class=["\']txt["\'][^>]*>(.*?)</div>', html, re.S)
+        chunks = re.findall(r'<span\b[^>]*\sclass=["\']s_title["\'][^>]*>\s*신청기간\s*</span>\s*<div\b[^>]*\sclass=["\']txt["\'][^>]*>(.*?)</div>', html, re.S)
     else:
         raise ValueError("unsupported_source")
-    periods = []
-    for chunk in chunks:
-        text = normalize_text(re.sub(r'<[^>]+>', ' ', chunk))
-        text = re.sub(r'\([월화수목금토일]\)', '', text).removesuffix("까지").strip()
-        parts = text.split('~')
-        if len(parts) != 2:
-            raise ValueError("period_missing")
-        start, end = (parse_deadline(v.strip()) for v in parts)
-        if not start or not end or start > end:
-            raise ValueError("period_invalid")
-        periods.append((start, end, text))
-    if not periods:
-        raise ValueError("period_missing")
+    values = [normalize_text(re.sub(r'<[^>]+>', ' ', chunk)) for chunk in chunks]
+    values = [value for value in values if value not in ("", "-", "–", "—")]
+    if not values:
+        raise PeriodError("period_missing")
+
+    conditional = [value for value in values if CONDITIONAL_PERIOD.fullmatch(value)]
+    attachment = [value for value in values if ATTACHMENT_PERIOD.fullmatch(value)]
+    variable = [value for value in values if VARIABLE_PERIOD.fullmatch(value)]
+    if conditional or attachment or variable:
+        evidence = " / ".join(dict.fromkeys(values))
+        if len(conditional) == len(values) and len({re.sub(r"\s+", "", v) for v in values}) == 1:
+            raise PeriodError("period_conditional", evidence)
+        if len(attachment) == len(values):
+            raise PeriodError("period_attachment", evidence)
+        if len(variable) == len(values):
+            raise PeriodError("period_varies", evidence)
+        raise PeriodError("period_conflict", evidence)
+
+    periods = [(*_fixed_period(value), value) for value in values]
     # K-Startup 상단은 시작 시각을 생략할 수 있다. 종료값은 일치해야 한다.
-    if len({p[1] for p in periods}) != 1 or len({p[0][:10] for p in periods}) != 1:
-        raise ValueError("period_conflict")
-    return max(periods, key=lambda p: len(p[0]))
+    if (len({(end[:10], instant(end, end=True)) for _, end, _ in periods}) != 1
+            or len({start[:10] for start, _, _ in periods}) != 1
+            or len({instant(start) for start, _, _ in periods if len(start) > 10}) > 1):
+        raise PeriodError("period_conflict", " / ".join(dict.fromkeys(values)))
+    return max(periods, key=lambda p: (len(p[0]), len(p[1])))
 
 
 def check_notice(rec: NoticeRecord, raw: bytes, checked_at: str) -> dict:
@@ -99,6 +146,7 @@ def apply_check(store: Store, rec: NoticeRecord, result: dict) -> None:
     rec.verified_at = result["checked_at"]
     rec.verified_deadline = rec.deadline
     rec.verification_status = "confirmed"
+    rec.period_condition = ""
     basis = content_basis(rec)
     extraction_status = rec.extraction_status
     extraction_basis = rec.extraction_basis
@@ -109,7 +157,7 @@ def apply_check(store: Store, rec: NoticeRecord, result: dict) -> None:
             extraction_status, extraction_basis = "stale", ""
     with store.conn:
         store.conn.execute("""UPDATE notices SET deadline=?, starts_at=?, verified_at=?,
-            verified_deadline=?, verification_status='confirmed', summary_basis='',
+            verified_deadline=?, verification_status='confirmed', period_condition='', summary_basis='',
             extraction_status=?, extraction_basis=? WHERE key=?""",
             (rec.deadline, rec.starts_at, rec.verified_at, rec.deadline,
              extraction_status, extraction_basis, rec.key))
@@ -124,7 +172,15 @@ def allowed_url(rec: NoticeRecord) -> bool:
     expected = {"bizinfo": ("www.bizinfo.go.kr", "pblancId"),
                 "kstartup": ("www.k-startup.go.kr", "pbancSn")}.get(rec.source)
     return bool(expected and url.scheme == "https" and url.hostname == expected[0]
+                and url.username is None and url.password is None and url.port in (None, 443)
                 and parse_qs(url.query).get(expected[1]) == [rec.source_id])
+
+
+def _report_url(rec: NoticeRecord) -> str:
+    """원문을 찾는 데 필요한 파라미터만 보고서에 남긴다."""
+    url = urlparse(rec.url)
+    query = {"pblancId": rec.source_id} if rec.source == "bizinfo" else {"pbancSn": rec.source_id, "schM": "view"}
+    return url._replace(query=urlencode(query), fragment="").geturl()
 
 
 def recheck(db: Path, limit: int = 100, apply: bool = False, keys: list[str] | None = None,
@@ -154,26 +210,42 @@ def recheck(db: Path, limit: int = 100, apply: bool = False, keys: list[str] | N
         results = []
         started_at = utc_now()
         for rec in candidates:
+            official_url = ""
             try:
                 if not allowed_url(rec):
                     raise ValueError("untrusted_url")
+                official_url = _report_url(rec)
                 raw = http_get(rec.url, timeout=10)
                 result = check_notice(rec, raw, utc_now())
+                result["url"] = official_url
                 if apply:
                     apply_check(store, rec, result)
                 results.append({**result, "result": "confirmed"})
             except Exception as exc:
                 # 실패 원문/URL 예외에 포함된 민감값은 출력하지 않는다.
-                known_errors = {"period_conflict", "period_missing", "period_invalid", "untrusted_url", "unsupported_source"}
-                reason = str(exc) if isinstance(exc, ValueError) and str(exc) in known_errors else type(exc).__name__
-                if reason == "period_conflict" and apply:
-                    store.conn.execute("UPDATE notices SET verification_status='conflict' WHERE key=?", (rec.key,))
-                    store.commit()
-                results.append({"key": rec.key, "result": "unconfirmed", "reason": reason,
-                                "checked_at": utc_now()})
+                known_errors = {"untrusted_url", "unsupported_source"}
+                reason = (str(exc) if isinstance(exc, PeriodError) or
+                          isinstance(exc, ValueError) and str(exc) in known_errors else type(exc).__name__)
+                checked_at = utc_now()
+                item = {"key": rec.key, "result": "unconfirmed", "reason": reason, "checked_at": checked_at}
+                if official_url:
+                    item["url"] = official_url
+                if isinstance(exc, PeriodError) and exc.evidence:
+                    item["evidence"] = exc.evidence[:500]
+                if reason == "period_conditional":
+                    item["old_deadline"] = rec.deadline
+                results.append(item)
             if apply:
                 item = results[-1]
                 with store.conn:
+                    if item.get("reason") == "period_conflict":
+                        store.conn.execute("UPDATE notices SET verification_status='conflict', period_condition='' WHERE key=?",
+                                           (rec.key,))
+                    elif item.get("reason") == "period_conditional":
+                        store.conn.execute("""UPDATE notices SET verification_status='conditional', period_condition=?,
+                            verified_at=?, verified_deadline='',
+                            deadline_raw=COALESCE(NULLIF(deadline_raw,''), deadline), deadline='', starts_at='' WHERE key=?""",
+                            (item["evidence"], item["checked_at"], rec.key))
                     store.conn.execute("INSERT OR REPLACE INTO recheck_attempts VALUES (?,?,?,?)",
                                        (rec.key, item["checked_at"], item["result"], item.get("reason", "")))
         return {"mode": "apply" if apply else "dry-run", "started_at": started_at,

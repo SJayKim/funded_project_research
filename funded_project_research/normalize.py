@@ -48,7 +48,8 @@ class NoticeRecord:
     source_checked_at: str = ""   # API/목록에서 실제 다시 확인한 UTC 시각
     verified_at: str = ""         # 공식 상세의 구조화된 기간 확인 시각
     verified_deadline: str = ""
-    verification_status: str = "" # confirmed / conflict
+    verification_status: str = "" # confirmed / conflict / conditional
+    period_condition: str = ""    # 공식 상세에 표시된 고정 마감 없는 신청 조건
     summary_basis: str = ""
     extraction_basis: str = ""
     extracted_at: str = ""

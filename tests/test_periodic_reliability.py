@@ -117,6 +117,14 @@ class TestReliabilityReport(unittest.TestCase):
         self.assertTrue({"source_unhealthy", "official_unconfirmed", "near_deadline_unverified"} <= codes)
         self.assertEqual(report["status"], "attention")
 
+    def test_conditional_period_is_visible_and_remains_unconfirmed_for_ci(self):
+        check = {**self.rechecked, "selected": 1, "due_count": 1,
+                 "results": [{"key": self.rec.key, "result": "unconfirmed", "reason": "period_conditional"}]}
+        report = reliability.build_report(self.db, check, NOW)
+        self.assertEqual((report["status"], report["official"]["confirmed"]), ("attention", 0))
+        self.assertEqual(report["official"]["unconfirmed_by_reason"], {"period_conditional": 1})
+        self.assertIn("period_conditional 1건", reliability.markdown_report(report))
+
     def test_missing_or_old_recheck_report_cannot_be_success(self):
         for check in (None, [], {}, {**self.rechecked, "checked_at": (NOW - timedelta(hours=2)).isoformat()},
                       {**self.rechecked, "due_count": 1}, {**self.rechecked, "selected": 1}):
