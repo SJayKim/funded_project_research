@@ -8,12 +8,13 @@ import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .adapters.base import http_get
 from .extract import html_to_text
-from .normalize import NoticeRecord, content_basis, normalize_text, parse_deadline
+from .normalize import NoticeRecord, content_basis, normalize_text, parse_deadline, kstartup_archive_url
 from .status import KST, as_kst, instant, notice_state, utc_now
 from .store import Store
 
@@ -147,6 +148,8 @@ def check_notice(rec: NoticeRecord, raw: bytes, checked_at: str) -> dict:
 
 def apply_check(store: Store, rec: NoticeRecord, result: dict) -> None:
     """대상 필드만 갱신한다. first_seen/last_seen/alerts/ID는 보존한다."""
+    if result["url"] == kstartup_archive_url(rec):
+        rec.url = result["url"]
     rec.deadline, rec.starts_at = result["new_deadline"], result["starts_at"]
     rec.verified_at = result["checked_at"]
     rec.verified_deadline = rec.deadline
@@ -161,10 +164,10 @@ def apply_check(store: Store, rec: NoticeRecord, result: dict) -> None:
         else:
             extraction_status, extraction_basis = "stale", ""
     with store.conn:
-        store.conn.execute("""UPDATE notices SET deadline=?, starts_at=?, verified_at=?,
+        store.conn.execute("""UPDATE notices SET url=?, deadline=?, starts_at=?, verified_at=?,
             verified_deadline=?, verification_status='confirmed', period_condition='', summary_basis='',
             extraction_status=?, extraction_basis=? WHERE key=?""",
-            (rec.deadline, rec.starts_at, rec.verified_at, rec.deadline,
+            (rec.url, rec.deadline, rec.starts_at, rec.verified_at, rec.deadline,
              extraction_status, extraction_basis, rec.key))
         store.conn.execute("""INSERT OR IGNORE INTO verifications
             (key, checked_at, url, content_hash, old_deadline, new_deadline, evidence)
@@ -221,7 +224,16 @@ def recheck(db: Path, limit: int = 100, apply: bool = False, keys: list[str] | N
                     raise ValueError("untrusted_url")
                 official_url = _report_url(rec)
                 raw = http_get(rec.url, timeout=10)
-                result = check_notice(rec, raw, utc_now())
+                try:
+                    result = check_notice(rec, raw, utc_now())
+                except PeriodError as error:
+                    archive_url = kstartup_archive_url(rec)
+                    if str(error) != "period_missing" or not archive_url:
+                        raise
+                    archived = replace(rec, url=archive_url)
+                    official_url = _report_url(archived)
+                    raw = http_get(archive_url, timeout=10)
+                    result = check_notice(archived, raw, utc_now())
                 result["url"] = official_url
                 if apply:
                     apply_check(store, rec, result)
