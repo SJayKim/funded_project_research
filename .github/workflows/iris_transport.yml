@@ -1,5 +1,7 @@
 name: iris-transport-diagnostic
 on:
+  push:
+    branches: [diagnose/iris-transport-20261123]
   workflow_dispatch:
 permissions:
   contents: read
