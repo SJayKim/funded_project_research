@@ -11,3 +11,5 @@ K-Startup 포털의 활용 승인과 GitHub 전용 Secret 등록 후 실제 API 
 나라장터는 운영 조회 도중 총건수가 바뀌는 것을 확인했다. 중간 총건수의 변화만으로 중단하지 않고, 종료 시 실제 수집 건수와 마지막 응답 총건수를 대조한다.
 
 IRIS는 두 운영 러너에서 상세 조회 시간 초과가 발생했지만, 로컬에서 12건 모두 정상 조회됐고 별도 GitHub 러너에서도 동일 상세의 GET·POST가 모두 정상 응답했다. 세션 유지 여부에 따른 차이는 확인되지 않았다. 검증되지 않은 전송 방식 변경은 제외하고, 기존 POST와 제한된 일시 오류 복구를 유지한다. 외부 응답 실패가 지속되면 CI는 계속 실패를 표시한다.
+
+5초 간격의 IRIS 전체 상세 조회에서도 연속 시간 초과가 재현됐다. 간격 변경은 제외했다. 마지막 진단은 [45134315996](https://github.com/SJayKim/funded_project_research/actions/runs/45134315996)이며, #10은 실제 상세 수집의 안정화가 확인될 때까지 유지한다. 성공한 조회는 K-Startup [30,631건/32페이지](https://github.com/SJayKim/funded_project_research/actions/runs/45132623354), 나라장터 [4,539건/47페이지](https://github.com/SJayKim/funded_project_research/actions/runs/45132627016), 과기정통부 4,283건/429페이지와 기업마당 1,310건/15페이지([전체 진단](https://github.com/SJayKim/funded_project_research/actions/runs/45129664538))이다.

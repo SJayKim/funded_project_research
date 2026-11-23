@@ -68,7 +68,7 @@ def parse_detail(html: str) -> dict:
 class IrisAdapter(Adapter):
     source = "iris"
 
-    def __init__(self, max_pages: int = 15, detail: bool = True, interval: float = 5.0):
+    def __init__(self, max_pages: int = 15, detail: bool = True, interval: float = 0.5):
         self.max_pages = max_pages
         self.detail = detail
         self.interval = interval
