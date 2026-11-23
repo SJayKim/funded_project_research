@@ -1,0 +1,50 @@
+name: iris-transport-diagnostic
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compare public detail request sessions
+        run: |
+          python - <<'PY'
+          import json, ssl, time, urllib.request
+          from http.cookiejar import CookieJar
+          from urllib.parse import urlencode
+          from funded_project_research.adapters.base import USER_AGENT, BROWSER_HEADERS, http_get
+          from funded_project_research.adapters.iris import LIST_URL, VIEW_URL, parse_rows, parse_detail
+          context = ssl.create_default_context()
+          context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+          cookies = CookieJar()
+          opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), urllib.request.HTTPCookieProcessor(cookies))
+          headers = {'User-Agent': USER_AGENT, **BROWSER_HEADERS, 'Referer': LIST_URL}
+          try:
+              request = urllib.request.Request(LIST_URL, data=urlencode({'pageIndex': 1}).encode(), headers=headers)
+              with opener.open(request, timeout=15) as response:
+                  rows = parse_rows(response.read().decode())
+              print(json.dumps({'list_rows': len(rows), 'session_cookie_count': len(cookies)}), flush=True)
+              row = rows[0]
+              fields = {k:row[k] for k in ('ancmId','bsnsYy','sorgnBsnsCd','bsnsAncmSn')}
+              fields['bsnsYyDetail'] = row['bsnsYy']
+              for method in ('plain-get', 'session-get', 'session-post'):
+                  started = time.monotonic()
+                  try:
+                      if method == 'plain-get':
+                          raw = http_get(VIEW_URL + '?' + urlencode(fields), timeout=15)
+                      else:
+                          request = urllib.request.Request(VIEW_URL + ('?' + urlencode(fields) if method == 'session-get' else ''), data=urlencode(fields).encode() if method == 'session-post' else None, headers=headers)
+                          with opener.open(request, timeout=15) as response:
+                              raw = response.read()
+                      print(json.dumps({'method': method, 'bytes': len(raw), 'detail_present': any(parse_detail(raw.decode()).values()), 'seconds': round(time.monotonic()-started, 2)}), flush=True)
+                  except Exception as error:
+                      print(json.dumps({'method': method, 'error_type': type(error).__name__, 'http_status': getattr(error, 'code', None), 'seconds': round(time.monotonic()-started, 2)}), flush=True)
+          except Exception as error:
+              print(json.dumps({'stage':'list', 'error_type':type(error).__name__, 'http_status':getattr(error, 'code', None)}))
+          PY
