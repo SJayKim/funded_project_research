@@ -117,13 +117,47 @@ class TestReliabilityReport(unittest.TestCase):
         self.assertTrue({"source_unhealthy", "official_unconfirmed", "near_deadline_unverified"} <= codes)
         self.assertEqual(report["status"], "attention")
 
-    def test_conditional_period_is_visible_and_remains_unconfirmed_for_ci(self):
+    def test_conditional_period_is_visible_without_failing_ci(self):
         check = {**self.rechecked, "selected": 1, "due_count": 1,
-                 "results": [{"key": self.rec.key, "result": "unconfirmed", "reason": "period_conditional"}]}
+                 "results": [{"key": self.rec.key, "result": "unconfirmed", "reason": "period_conditional", "evidence": "예산 소진시까지", "url": self.rec.url, "checked_at": STAMP}]}
         report = reliability.build_report(self.db, check, NOW)
         self.assertEqual((report["status"], report["official"]["confirmed"]), ("attention", 0))
         self.assertEqual(report["official"]["unconfirmed_by_reason"], {"period_conditional": 1})
         self.assertIn("period_conditional 1건", reliability.markdown_report(report))
+        self.assertEqual(report["severity_counts"], {"error": 0, "warning": 0, "info": 1})
+        self.assertFalse(reliability.has_failures(report))
+
+    def test_period_review_needs_evidence_and_never_hides_access_failure(self):
+        for reason, evidence, severity in [
+            ("period_varies", "차수별 상이", "warning"),
+            ("period_conflict", "상충하는 기간", "warning"),
+            ("period_attachment", "첨부 참조", "warning"),
+            ("period_invalid", "사업별 홈페이지 확인", "warning"),
+            ("period_conditional", "", "error"),
+            ("TimeoutError", "", "error"),
+            ("period_missing", "", "error"),
+        ]:
+            with self.subTest(reason=reason, evidence=evidence):
+                check = {**self.rechecked, "selected": 1, "due_count": 1,
+                         "results": [{"key": self.rec.key, "result": "unconfirmed", "reason": reason,
+                                      "evidence": evidence, "url": self.rec.url, "checked_at": STAMP}]}
+                report = reliability.build_report(self.db, check, NOW)
+                self.assertEqual(report["severity_counts"][severity], 1)
+                self.assertEqual(reliability.has_failures(report), severity == "error")
+
+    def test_warning_only_cli_succeeds_and_preserves_review_targets(self):
+        output = Path(self.temp.name) / "report.json"
+        check_path = Path(self.temp.name) / "recheck.json"
+        check_path.write_text(json.dumps({**self.rechecked, "selected": 1, "due_count": 1,
+            "results": [{"key": self.rec.key, "result": "unconfirmed", "reason": "period_varies",
+                         "evidence": "차수별 상이", "url": self.rec.url, "checked_at": STAMP}]}))
+        with patch("sys.argv", ["audit", "--db", str(self.db), "--recheck-report", str(check_path), "--report", str(output)]), \
+             patch.object(reliability, "datetime") as clock, redirect_stdout(io.StringIO()):
+            clock.now.return_value = NOW
+            self.assertEqual(reliability.main(), 0)
+        report = json.loads(output.read_text())
+        self.assertEqual(report["official"]["review_targets"][0]["key"], self.rec.key)
+        self.assertEqual(report["official"]["confirmed"], 0)
 
     def test_missing_or_old_recheck_report_cannot_be_success(self):
         for check in (None, [], {}, {**self.rechecked, "checked_at": (NOW - timedelta(hours=2)).isoformat()},

@@ -40,7 +40,10 @@ class NaraAdapter(Adapter):
         bgn = (self.now - timedelta(days=self.lookback_days - 1)).strftime("%Y%m%d") + "0000"
         end = self.now.strftime("%Y%m%d%H%M")
         out = self.begin()
-        requests = SourceRequests(self.source)
+        requests = SourceRequests(self.source, seconds=480)
+        missing = {}
+        expected = None
+        stopped = False
         missing_kind = ""
         consecutive_failures = 0
         for page in range(1, self.max_pages + 1):
@@ -53,8 +56,10 @@ class NaraAdapter(Adapter):
                 if not isinstance(error, RequestTimeLimit) and not transient(error):
                     raise
                 missing_kind = request_error_kind(error)
+                missing[page] = (url, missing_kind)
                 consecutive_failures += 1
                 if isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                    stopped = True
                     break
                 continue
             consecutive_failures = 0
@@ -62,16 +67,42 @@ class NaraAdapter(Adapter):
             body = response.get("body", {})
             if "items" not in body:
                 raise SourceError("schema")
+            if expected is None:
+                expected = body.get("totalCount")
+            elif body.get("totalCount") != expected:
+                raise SourceError("total_changed")
             items = body["items"]
             if items == "" and str(body.get("totalCount")) == "0":
                 items = []
             self.add_page(items, "bidNtceNo")
             if not items:
-                self.check_total(body.get("totalCount"))
                 break
         else:
             self.capped()
-        if missing_kind:
+        if not stopped:
+            for page, (url, reason) in list(missing.items()):
+                try:
+                    response = requests.recover("list-recovery", f"page={page}", http_get_json, url).get("response", {})
+                    check_api_code(response.get("header", {}).get("resultCode"))
+                    body = response.get("body", {})
+                    if body.get("totalCount") != expected:
+                        raise SourceError("total_changed")
+                    items = body.get("items")
+                    if not isinstance(items, list) or not items:
+                        raise SourceError("schema")
+                    ids = [item.get("bidNtceNo") for item in items]
+                    if len(set(ids)) != len(ids) or set(ids) & {r.raw["bidNtceNo"] for r in out}:
+                        raise SourceError("duplicate_notices")
+                    self.add_page(items, "bidNtceNo")
+                except REQUEST_ERRORS as error:
+                    missing[page] = (url, request_error_kind(error))
+                    if isinstance(error, RequestTimeLimit) or not transient(error):
+                        break
+                else:
+                    del missing[page]
+        self.check_total(expected)
+        if missing:
+            missing_kind = next(iter(missing.values()))[1]
             self.collection_state = "partial" if out else "failed"
             self.collection_error = f"list_{missing_kind}"
         return out

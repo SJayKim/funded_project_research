@@ -121,6 +121,9 @@ class IrisAdapter(Adapter):
                 raise SourceError("unverified_empty_detail")
             return detail
 
+        previous_state = (self.collection_state, self.collection_error)
+        missing = []
+        stopped = False
         consecutive_failures = 0
         for index, rec in enumerate(rows, start=1):
             row = rec.raw
@@ -135,12 +138,29 @@ class IrisAdapter(Adapter):
                 row.update(requests.fetch("detail", target, fetch_detail, fields))
                 consecutive_failures = 0
             except REQUEST_ERRORS as error:
+                if transient(error):
+                    missing.append((row, target, fields))
+                else:
+                    stopped = True
                 self.collection_state = "partial"
                 if self.collection_error in ("", "page_limit"):
                     self.collection_error = f"detail_{request_error_kind(error)}"
                 consecutive_failures += 1
                 if (isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT
                         or isinstance(error, HTTPError) and error.code in (401, 403, 429)):
+                    stopped = True
                     break
             if index < len(rows):
                 time.sleep(self.interval)
+
+        if missing and not stopped:
+            unresolved = []
+            for row, target, fields in missing:
+                try:
+                    row.update(requests.recover("detail-recovery", target, fetch_detail, fields))
+                except REQUEST_ERRORS as error:
+                    unresolved.append(error)
+                    if isinstance(error, RequestTimeLimit) or not transient(error):
+                        break
+            if not unresolved:
+                self.collection_state, self.collection_error = previous_state

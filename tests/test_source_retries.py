@@ -65,7 +65,7 @@ class TestSourceRetries(unittest.TestCase):
     def test_nara_preserves_data_before_and_after_unresolved_page(self):
         with patch("funded_project_research.adapters.nara.http_get_json", side_effect=[
             nara_page("A", total=3), TimeoutError(), TimeoutError(),
-            nara_page("C", total=3), nara_page(total=3),
+            nara_page("C", total=3), nara_page(total=3), TimeoutError(), TimeoutError(),
         ]):
             adapter = NaraAdapter(service_key="stub")
             self.assertEqual([r.raw["bidNtceNo"] for r in adapter.collect()], ["A", "C"])
@@ -149,12 +149,12 @@ class TestSourceRetries(unittest.TestCase):
         variants = iris_page("19508", "19508").replace(b"'S1','1','1'", b"'S1','2','1'", 1)
         error = URLError(TimeoutError("fixture"))
         with patch("funded_project_research.adapters.iris.http_post", side_effect=[
-            variants, error, error, IRIS_DETAIL,
+            variants, error, error, IRIS_DETAIL, error, error,
         ]) as fetch:
             adapter = IrisAdapter(interval=0)
             rows = adapter.collect()
         sequence_calls = [call.args[1]["bsnsAncmSn"] for call in fetch.call_args_list[1:]]
-        self.assertEqual(sequence_calls, ["2", "2", "1"])
+        self.assertEqual(sequence_calls, ["2", "2", "1", "2", "2"])
         self.assertEqual(["attachments" in row.raw for row in rows], [False, True])
         self.assertEqual((adapter.collection_state, adapter.collection_error), ("partial", "detail_timeout"))
         self.assertIn("iris detail notice=19508 sequence=2 at=", self.log.getvalue())
@@ -175,7 +175,7 @@ class TestSourceRetries(unittest.TestCase):
                   patch.object(collect, "enrich", return_value={"skipped_no_key": True}),
                   patch.object(collect.sys, "argv", ["collect", "--no-notify"]),
                   patch("funded_project_research.adapters.iris.http_post", side_effect=[
-                      iris_page("1", "2"), TimeoutError(), TimeoutError(), IRIS_DETAIL,
+                      iris_page("1", "2"), TimeoutError(), TimeoutError(), IRIS_DETAIL, TimeoutError(), TimeoutError(),
                   ]), contextlib.redirect_stdout(io.StringIO())):
                 with self.assertRaises(SystemExit) as exit_code:
                     collect.main()

@@ -21,6 +21,26 @@ SOURCES = ("kstartup", "bizinfo", "msit", "nara", "iris")
 MAX_CHECK_AGE_HOURS = 8
 
 
+def has_failures(report: dict) -> bool:
+    # Reports written before severity was introduced remain conservative.
+    return any(issue.get("severity", "error") == "error" for issue in report["issues"])
+
+
+def period_severity(result: dict, now: datetime) -> str:
+    checked = instant(result.get("checked_at", ""))
+    evidence = result.get("evidence")
+    url = urlparse(result.get("url", ""))
+    if not (isinstance(evidence, str) and evidence.strip() and checked
+            and timedelta(0) <= now - checked <= timedelta(hours=1)
+            and url.scheme == "https" and url.hostname in ("www.bizinfo.go.kr", "www.k-startup.go.kr")):
+        return "error"
+    if result.get("reason") == "period_conditional":
+        return "info"
+    if result.get("reason") in ("period_varies", "period_attachment", "period_conflict", "period_invalid"):
+        return "warning"
+    return "error"
+
+
 def latest_report(db: Path) -> dict | None:
     with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='reliability_checks'").fetchone():
@@ -114,15 +134,25 @@ def build_report(db: Path, recheck: dict | None, now: datetime | None = None) ->
     failure_reasons = Counter(r.get("reason") if isinstance(r.get("reason"), str) else "unknown"
                               for r in results if r["result"] != "confirmed")
     failures = sum(failure_reasons.values())
-    if failures:
-        issues.append({"code": "official_unconfirmed", "count": failures})
+    review_targets = []
+    for result in results:
+        if result["result"] == "confirmed":
+            continue
+        severity = period_severity(result, now)
+        issues.append({"code": "official_unconfirmed", "count": 1, "severity": severity,
+                       "key": result["key"], "reason": result.get("reason", "unknown")})
+        if severity != "error":
+            review_targets.append({key: result[key] for key in ("key", "url", "reason", "evidence", "checked_at")})
+    for issue in issues:
+        issue.setdefault("severity", "warning" if issue["code"] in ("conflict", "near_deadline_unverified") else "error")
+    severity_counts = {level: sum(i["severity"] == level for i in issues) for level in ("error", "warning", "info")}
     run_id = os.environ.get("GITHUB_RUN_ID", "local-" + uuid.uuid4().hex) + ":" + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     return {"run_id": run_id, "checked_at": now.isoformat(timespec="seconds"),
             "status": "attention" if issues else "ok", "max_age_hours": MAX_CHECK_AGE_HOURS,
-            "counts": dict(counts), "sources": health, "issues": issues,
+            "counts": dict(counts), "sources": health, "issues": issues, "severity_counts": severity_counts,
             "official": {"selected": len(results), "confirmed": len(results) - failures,
                          "unconfirmed": failures, "remaining": (recheck or {}).get("remaining_candidates", 0),
-                         "unconfirmed_by_reason": dict(sorted(failure_reasons.items())),
+                         "unconfirmed_by_reason": dict(sorted(failure_reasons.items())), "review_targets": review_targets,
                          "changed": sum(r["result"] == "confirmed" and r["old_deadline"] != r["new_deadline"] for r in results)}}
 
 
@@ -140,13 +170,19 @@ def markdown_report(report: dict) -> str:
     lines = ["## 정부과제 자동 신뢰성 점검", "",
              f"판정: {report['status']} · 완료 시각: {report['checked_at']}",
              f"공고 {report['counts']['total']:,}건 · 원문 확인 {report['official']['confirmed']}건 / {report['official']['selected']}건", "",
-             "| 검사 항목 | 출처/건수 |", "|---|---|"]
-    lines += [f"| {r['code']} | {r.get('source', r.get('count', ''))} |" for r in report["issues"]]
+             "| 판정 | 검사 항목 | 출처/건수 |", "|---|---|---|"]
+    lines += [f"| {r.get('severity', 'error')} | {r['code']} | {r.get('source', r.get('count', ''))} |" for r in report["issues"]]
     if not report["issues"]:
         lines.append("| 설정된 자동 검사 통과 | 전체 공고의 의미 정확성을 보증하지 않음 |")
     if reasons := report["official"].get("unconfirmed_by_reason"):
         lines += ["", "원문 미확인 사유별 건수"]
         lines += [f"- {reason} {count}건" for reason, count in reasons.items()]
+    if levels := report.get("severity_counts"):
+        lines += ["", f"실패 {levels['error']} · 주의 {levels['warning']} · 안내 {levels['info']} (주의·안내는 날짜 확인 완료가 아님)"]
+    for target in report["official"].get("review_targets", []):
+        # JSON retains exact evidence; render text safely in Markdown.
+        evidence = target["evidence"].replace("<", "&lt;").replace(">", "&gt;").replace("\n", " ")
+        lines.append(f"- [{target['key']}]({target['url']}): {evidence} · {target['checked_at']}")
     return "\n".join(lines) + "\n"
 
 
@@ -169,7 +205,7 @@ def main() -> int:
         with open(summary, "a", encoding="utf-8") as stream:
             stream.write(markdown_report(report))
     print(f"자동 점검: {report['status']} · {len(report['issues'])}개 항목 · 원문 {report['official']['confirmed']}건 확인")
-    return 2 if report["issues"] else 0
+    return 2 if has_failures(report) else 0
 
 
 if __name__ == "__main__":

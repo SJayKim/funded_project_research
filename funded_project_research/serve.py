@@ -441,7 +441,7 @@ function renderHealth(now) {
   const checked = instant(AUDIT?.checked_at);
   const overdue = checked === null || now.getTime() < checked || now.getTime() - checked > 8 * 3600000;
   $('check-status').textContent = overdue ? '자동 점검 확인 필요 · ' + (checked === null ? '완료 기록 없음' : '최근 점검 후 8시간 경과')
-    : '최근 자동 점검 ' + displayTime(AUDIT.checked_at) + ' · ' + (AUDIT.status === 'ok' ? '설정된 검사 통과' : '재확인 필요 ' + AUDIT.issues.length + '개 항목')
+    : '최근 자동 점검 ' + displayTime(AUDIT.checked_at) + ' · ' + (AUDIT.severity_counts ? '실패 ' + AUDIT.severity_counts.error + ' · 주의 ' + AUDIT.severity_counts.warning + ' · 안내 ' + AUDIT.severity_counts.info : (AUDIT.status === 'ok' ? '설정된 검사 통과' : '재확인 필요 ' + AUDIT.issues.length + '개 항목'))
       + ' · 날짜·형식 검사 ' + AUDIT.counts.total.toLocaleString() + '건 / 원문 ' + AUDIT.official.confirmed + '건 확인';
   $('check-detail').textContent = AUDIT ? '기업마당·K-Startup의 진행 중·상태 미확인 공고: 최근 24시간 원문 신청기간 확인 '
     + (AUDIT.counts.official_fresh || 0).toLocaleString() + '/' + (AUDIT.counts.supported_active || 0).toLocaleString() + '건 · 14일 내 마감 중 원문 미확인 '
