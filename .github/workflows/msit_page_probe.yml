@@ -1,0 +1,70 @@
+name: msit-page-diagnostic
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compare bounded MSIT page responses
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from collections import Counter
+          from urllib.error import HTTPError
+          from funded_project_research.adapters.base import SourceError, build_url, http_get
+          from funded_project_research.adapters.msit import BASE, _item_to_dict, _json_page
+
+          def digits(value):
+              text = str(value)
+              return text if re.fullmatch(r"[0-9]{1,12}", text) else None
+
+          def summarize(payload, page, fmt):
+              if fmt == "json":
+                  rows, total = _json_page(payload, page, 10)
+                  result = {"total": total, "verified_page_and_size": True}
+              else:
+                  root = ET.fromstring(payload)
+                  if root.tag == "OpenAPI_ServiceResponse":
+                      return {"provider_code": digits(root.findtext(".//returnReasonCode"))}
+                  rows = [_item_to_dict(item) for item in root.findall(".//items/item")]
+                  result = {"result_code": digits(root.findtext(".//resultCode")),
+                            "total": digits(root.findtext(".//totalCount")),
+                            "actual_page": digits(root.findtext(".//pageNo")),
+                            "actual_size": digits(root.findtext(".//numOfRows"))}
+
+              data_names = ("subject", "viewUrl", "deptName", "managerName", "managerTel", "pressDt")
+              field_counts = Counter(name for row in rows for name in data_names if name in row)
+              field_counts.update(name for row in rows for file in row.get("files", [])
+                                  for name in ("fileName", "fileUrl") if name in file)
+              ids = [match.group(1) if (match := re.search(r"nttSeqNo=([0-9]{1,12})(?:\D|$)", row["viewUrl"]))
+                     else None for row in rows]
+              return {**result, "count": len(rows), "notice_ids": ids, "field_counts": field_counts}
+
+          for page, fmt in ((329, "xml"), (371, "json"), (388, "json"),
+                            (418, "json"), (420, "json"), (429, "json")):
+              result = {"requested_page": page, "requested_size": 10, "requested_format": fmt}
+              params = {"pageNo": page, "numOfRows": 10, "returnType": fmt}
+              try:
+                  payload = http_get(build_url(BASE, os.environ["SERVICE_KEY"], params), timeout=12)
+                  result["http_outcome"] = "2xx"
+                  result.update(summarize(payload, page, fmt))
+              except HTTPError as error:
+                  result["http_error"] = error.code
+              except SourceError as error:
+                  result["source_error"] = str(error)
+              except Exception as error:
+                  result["error_type"] = type(error).__name__
+              print(json.dumps(result), flush=True)
+          PY
