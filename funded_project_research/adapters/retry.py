@@ -52,10 +52,17 @@ class SourceRequests:
     MAX_RETRIES = 8
     RETRY_DELAY = 1
 
-    def __init__(self, source: str):
+    def __init__(self, source: str, *, seconds: int | None = None):
         self.source = source
-        self.deadline = time.monotonic() + self.SOURCE_SECONDS
+        self.deadline = time.monotonic() + (self.SOURCE_SECONDS if seconds is None else seconds)
         self.retries_left = self.MAX_RETRIES
+
+    def recover(self, stage, target, fetch, *args):
+        if self.retries_left <= 0:
+            raise SourceError("retry_limit")
+        self.retries_left -= 1
+        time.sleep(self.RETRY_DELAY)
+        return self.fetch(stage, target, fetch, *args)
 
     def fetch(self, stage, target, fetch, *args):
         for attempt in (1, 2):

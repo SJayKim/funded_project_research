@@ -8,12 +8,14 @@ import json
 import os
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from time import monotonic
 from urllib.error import HTTPError, URLError
 import xml.etree.ElementTree as ET
 
+from .retry import transient
 from .base import Adapter, RawNotice, SourceError, build_url, check_api_code, http_get
 
 BASE = "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList"
@@ -235,7 +237,15 @@ class MsitAdapter(Adapter):
                         break
                     first_reason = missing[page]
                     try:
-                        result = self._fetch_page(page, json_page_size=json_page_size)
+                        for attempt in range(3):
+                            try:
+                                result = self._fetch_page(page, json_page_size=json_page_size)
+                                break
+                            except (URLError, TimeoutError) as error:
+                                delay = 2 ** attempt
+                                if not transient(error) or attempt == 2 or monotonic() + delay + 30 >= deadline:
+                                    raise
+                                time.sleep(delay)
                         recovered_ids = {_notice_id(row) for row in result[0]}
                         if len(recovered_ids) != len(result[0]) or recovered_ids & known_ids:
                             raise _PageError("duplicate_notices")
