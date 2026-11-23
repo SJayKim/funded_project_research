@@ -29,7 +29,10 @@ def has_failures(report: dict) -> bool:
 def period_severity(result: dict, now: datetime) -> str:
     checked = instant(result.get("checked_at", ""))
     evidence = result.get("evidence")
-    url = urlparse(result.get("url", ""))
+    try:
+        url = urlparse(result.get("url", ""))
+    except (TypeError, ValueError):
+        return "error"
     if not (isinstance(evidence, str) and evidence.strip() and checked
             and timedelta(0) <= now - checked <= timedelta(hours=1)
             and url.scheme == "https" and url.hostname in ("www.bizinfo.go.kr", "www.k-startup.go.kr")):
@@ -173,7 +176,7 @@ def markdown_report(report: dict) -> str:
              "| 판정 | 검사 항목 | 출처/건수 |", "|---|---|---|"]
     lines += [f"| {r.get('severity', 'error')} | {r['code']} | {r.get('source', r.get('count', ''))} |" for r in report["issues"]]
     if not report["issues"]:
-        lines.append("| 설정된 자동 검사 통과 | 전체 공고의 의미 정확성을 보증하지 않음 |")
+        lines.append("| 통과 | 설정된 자동 검사 통과 | 전체 공고의 의미 정확성을 보증하지 않음 |")
     if reasons := report["official"].get("unconfirmed_by_reason"):
         lines += ["", "원문 미확인 사유별 건수"]
         lines += [f"- {reason} {count}건" for reason, count in reasons.items()]

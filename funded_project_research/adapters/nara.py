@@ -44,7 +44,6 @@ class NaraAdapter(Adapter):
         missing = {}
         expected = None
         stopped = False
-        missing_kind = ""
         consecutive_failures = 0
         for page in range(1, self.max_pages + 1):
             url = build_url(BASE, self.service_key,
@@ -88,7 +87,9 @@ class NaraAdapter(Adapter):
                     if body.get("totalCount") != expected:
                         raise SourceError("total_changed")
                     items = body.get("items")
-                    if not isinstance(items, list) or not items:
+                    if not isinstance(items, list) or not items or any(
+                            not isinstance(item, dict) or not isinstance(item.get("bidNtceNo"), str)
+                            for item in items):
                         raise SourceError("schema")
                     ids = [item.get("bidNtceNo") for item in items]
                     if len(set(ids)) != len(ids) or set(ids) & {r.raw["bidNtceNo"] for r in out}:
