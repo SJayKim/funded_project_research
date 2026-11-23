@@ -138,6 +138,33 @@ class TestMsitPageRecovery(unittest.TestCase):
                          [str(page) for page in range(1, 8)])
         self.assertEqual((adapter.collection_state, adapter.collection_error), ("success", ""))
 
+    def test_recovery_handles_fifteen_transient_gaps_and_stops_at_twenty_pages(self):
+        for failed_pages, recovery_pages, remaining_error in (
+            (15, 15, ""),
+            (21, 20, "page_22_network"),
+        ):
+            with self.subTest(failed_pages=failed_pages):
+                attempts = Counter()
+                total = failed_pages + 3
+
+                def fetch(url):
+                    page = _page_number(url)
+                    attempts[page] += 1
+                    if 2 <= page <= failed_pages + 1 and attempts[page] == 1:
+                        raise TimeoutError
+                    return _page_xml(page, total)
+
+                adapter = MsitAdapter(service_key="fixture")
+                with patch(f"{TARGET}.http_get", side_effect=fetch), redirect_stderr(io.StringIO()):
+                    rows = adapter.collect()
+
+                self.assertEqual({page for page, count in attempts.items() if count > 1},
+                                 set(range(2, recovery_pages + 2)))
+                self.assertEqual(sum(attempts.values()), total + recovery_pages)
+                self.assertEqual(len(rows), total - failed_pages + recovery_pages)
+                self.assertEqual(adapter.collection_state, "partial" if remaining_error else "success")
+                self.assertEqual(adapter.collection_error, remaining_error)
+
     def test_json_fallback_rejects_wrong_page_or_size(self):
         for returned_page, returned_size, reason in [
             (3, 1, "page_number_mismatch"),
