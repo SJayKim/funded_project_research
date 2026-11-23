@@ -12,6 +12,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from .adapters.base import RawNotice
 from .status import KST
@@ -90,6 +91,21 @@ def parse_deadline(value: str | None) -> str:
         except ValueError:
             return ""
     return ""
+
+
+def kstartup_archive_url(rec: NoticeRecord) -> str | None:
+    if rec.source != "kstartup":
+        return None
+    try:
+        url = urlparse(rec.url)
+    except ValueError:
+        return None
+    if (url.scheme == "https" and url.netloc == "www.k-startup.go.kr"
+            and url.path == "/web/contents/bizpbanc-ongoing.do"
+            and parse_qs(url.query).get("pbancSn") == [rec.source_id]):
+        return url._replace(path="/web/contents/bizpbanc-deadline.do",
+                            query=urlencode({"pbancSn": rec.source_id, "schM": "view"}), fragment="").geturl()
+    return None
 
 
 def content_basis(rec: NoticeRecord) -> str:
