@@ -20,7 +20,7 @@ from .base import Adapter, RawNotice, SourceError, build_url, check_api_code, ht
 
 BASE = "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList"
 COLLECT_BUDGET_SECONDS = 12 * 60
-MAX_RECOVERY_PAGES = 12
+MAX_RECOVERY_PAGES = 20
 PROVIDER_HTTP_ERROR = "provider_04"
 
 
