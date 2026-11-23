@@ -39,6 +39,9 @@ IRIS_DETAIL = '<em>공고번호</em><span>2026-1</span>'.encode()
 
 class TestSourceRetries(unittest.TestCase):
     def setUp(self):
+        get = patch("funded_project_research.adapters.iris.http_get", side_effect=TimeoutError())
+        get.start()
+        self.addCleanup(get.stop)
         sleep = patch("funded_project_research.adapters.retry.time.sleep")
         self.sleep = sleep.start()
         self.addCleanup(sleep.stop)

@@ -15,7 +15,7 @@ BASE = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementIn
 class KStartupAdapter(Adapter):
     source = "kstartup"
 
-    def __init__(self, service_key: str | None = None, per_page: int = 100, max_pages: int = 500):
+    def __init__(self, service_key: str | None = None, per_page: int = 1000, max_pages: int = 500):
         self.service_key = service_key or os.environ.get("KSTARTUP_SERVICE_KEY") or os.environ["SERVICE_KEY"]
         self.per_page = per_page
         self.max_pages = max_pages

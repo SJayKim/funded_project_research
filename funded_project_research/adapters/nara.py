@@ -66,10 +66,9 @@ class NaraAdapter(Adapter):
             body = response.get("body", {})
             if "items" not in body:
                 raise SourceError("schema")
-            if expected is None:
-                expected = body.get("totalCount")
-            elif body.get("totalCount") != expected:
-                raise SourceError("total_changed")
+            # Notices can be added or withdrawn while the bounded date range is read.
+            # Validate the completed collection against the latest server count.
+            expected = body.get("totalCount")
             items = body["items"]
             if items == "" and str(body.get("totalCount")) == "0":
                 items = []

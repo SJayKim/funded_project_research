@@ -12,6 +12,12 @@ on:
         type: boolean
         default: false
 
+      source:
+        description: "진단할 출처 (all은 전체)"
+        type: choice
+        options: [all, kstartup, bizinfo, msit, nara, iris]
+        default: all
+
 permissions:
   contents: read
 
@@ -58,15 +64,23 @@ jobs:
           KSTARTUP_SERVICE_KEY: ${{ secrets.KSTARTUP_SERVICE_KEY }}
           BIZINFO_CRTFC_KEY: ${{ secrets.BIZINFO_CRTFC_KEY }}
           LLM_ENABLED: "off"
+          PROBE_SOURCE: ${{ inputs.source || 'all' }}
         run: |
           python - <<'PY'
-          import json
+          import json, os
           from contextlib import closing
-          from funded_project_research.collect import collect_all
+          from funded_project_research import collect
           from funded_project_research.store import Store
 
           with closing(Store(":memory:")) as store:
-              collect_all(store)
+              adapters = collect.ADAPTERS
+              selected = os.environ["PROBE_SOURCE"]
+              for adapter in adapters:
+                  if selected != "all" and adapter.source != selected:
+                      continue
+                  collect.ADAPTERS = [adapter]
+                  collect.collect_all(store)
+                  print(json.dumps(store.source_health(), ensure_ascii=False), flush=True)
               sources = store.source_health()
           print(json.dumps(sources, ensure_ascii=False, indent=2))
           if any(source["state"] != "success" for source in sources):

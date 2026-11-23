@@ -14,6 +14,9 @@ from test_msit_recovery import _page_xml, _page_number
 
 class TestDeferredRecovery(unittest.TestCase):
     def setUp(self):
+        get = patch("funded_project_research.adapters.iris.http_get", side_effect=TimeoutError())
+        get.start()
+        self.addCleanup(get.stop)
         for target in ('time.sleep',):
             p = patch(target)
             p.start()
@@ -37,6 +40,15 @@ class TestDeferredRecovery(unittest.TestCase):
         self.assertEqual(a.collection_state, 'success')
         self.assertGreater(calls.index(3), calls.index(2))
         self.assertEqual(calls[-1], 2)
+
+    def test_nara_finishes_when_live_total_changes_and_final_count_matches(self):
+        a = NaraAdapter(service_key='fixture')
+        with patch('funded_project_research.adapters.nara.http_get_json', side_effect=[
+            nara_page('1', total=2), nara_page('2', total=3),
+            nara_page('3', total=3), nara_page(total=3),
+        ]):
+            self.assertEqual(len(a.collect()), 3)
+        self.assertEqual(a.collection_state, 'success')
 
     def test_nara_recovery_rejects_duplicate_or_changed_total(self):
         for recovered, reason in ((nara_page('1', total=3), 'duplicate_notices'),
@@ -82,6 +94,28 @@ class TestDeferredRecovery(unittest.TestCase):
         self.assertTrue(all('attachments' in r.raw for r in rows))
         self.assertEqual(a.collection_state, 'success')
         self.assertEqual(calls, ['1', '1', '2', '1'])
+
+    def test_iris_public_get_recovers_temporary_post_timeout(self):
+        a = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[iris_page('1'), TimeoutError()]), \
+             patch('funded_project_research.adapters.iris.http_get', return_value=IRIS_DETAIL) as get:
+            rows = a.collect()
+        self.assertEqual(a.collection_state, 'success')
+        self.assertTrue(rows[0].raw['ancmNo'])
+        self.assertEqual(parse_qs(urlparse(get.call_args.args[0]).query)['ancmId'], ['1'])
+        self.assertLessEqual(get.call_args.kwargs['timeout'], 30)
+
+    def test_iris_does_not_use_get_after_access_denial(self):
+        from urllib.error import HTTPError
+        for status in (401, 403, 429):
+            with self.subTest(status=status):
+                a = IrisAdapter(interval=0)
+                with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+                    iris_page('1'), HTTPError('fixture', status, 'denied', {}, None),
+                ]), patch('funded_project_research.adapters.iris.http_get') as get:
+                    a.collect()
+                get.assert_not_called()
+                self.assertEqual(a.collection_state, 'partial')
 
     def test_msit_recovery_retries_transient_failure_within_bound(self):
         calls = []

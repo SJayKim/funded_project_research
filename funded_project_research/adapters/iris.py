@@ -10,8 +10,9 @@ from __future__ import annotations
 import re
 import time
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 
-from .base import Adapter, RawNotice, SourceError, http_post
+from .base import Adapter, RawNotice, SourceError, http_post, http_get
 from .retry import (
     CONSECUTIVE_FAILURE_LIMIT, REQUEST_ERRORS, RequestTimeLimit, SourceRequests,
     request_error_kind, transient,
@@ -115,7 +116,18 @@ class IrisAdapter(Adapter):
 
     def _collect_details(self, requests: SourceRequests, rows: list[RawNotice]) -> None:
         def fetch_detail(fields, timeout):
-            html = http_post(VIEW_URL, fields, timeout=timeout).decode("utf-8")
+            started = time.monotonic()
+            try:
+                raw = http_post(VIEW_URL, fields, timeout=min(timeout, 10))
+            except REQUEST_ERRORS as error:
+                left = timeout - (time.monotonic() - started)
+                if not transient(error) or left <= 0 or requests.retries_left <= 0:
+                    raise
+                # The public detail link accepts the same identifiers as GET.
+                # Share one request deadline; never fall back after access denial.
+                requests.retries_left -= 1
+                raw = http_get(VIEW_URL + "?" + urlencode(fields), timeout=left)
+            html = raw.decode("utf-8")
             detail = parse_detail(html)
             if not any(detail.values()):
                 raise SourceError("unverified_empty_detail")
