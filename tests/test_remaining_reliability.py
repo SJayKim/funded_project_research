@@ -2,11 +2,11 @@ import contextlib
 import io
 import unittest
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 
 from funded_project_research.adapters.nara import NaraAdapter
-from funded_project_research.adapters.iris import IrisAdapter, LIST_URL
+from funded_project_research.adapters.iris import IrisAdapter, LIST_URL, VIEW_URL
 from funded_project_research.adapters.msit import MsitAdapter
 from test_source_retries import nara_page, iris_page, IRIS_DETAIL
 from test_msit_recovery import _page_xml, _page_number
@@ -92,6 +92,48 @@ class TestDeferredRecovery(unittest.TestCase):
         self.assertEqual(a.collection_state, 'success')
         self.assertEqual(calls, ['1', '1', '2', '1'])
 
+    def test_iris_recovers_unrelated_timeout_after_unverified_detail(self):
+        adapter = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+            iris_page('024917', '017852', '032519'), b'<html></html>',
+            TimeoutError(), TimeoutError(), IRIS_DETAIL, IRIS_DETAIL,
+        ]) as fetch:
+            rows = adapter.collect()
+
+        detail_calls = [call.args[1]['ancmId'] for call in fetch.call_args_list[1:]]
+        self.assertEqual(detail_calls, ['024917', '017852', '017852', '032519', '017852'])
+        self.assertEqual(['attachments' in row.raw for row in rows], [False, True, True])
+        self.assertEqual((adapter.collection_state, adapter.collection_error),
+                         ('partial', 'detail_unverified_empty_detail'))
+
+    def test_iris_continues_recovery_after_an_individual_unverified_detail(self):
+        adapter = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+            iris_page('1', '2', '3'), TimeoutError(), TimeoutError(), TimeoutError(), TimeoutError(),
+            IRIS_DETAIL, b'<html></html>', IRIS_DETAIL,
+        ]) as fetch:
+            rows = adapter.collect()
+
+        detail_calls = [call.args[1]['ancmId'] for call in fetch.call_args_list[1:]]
+        self.assertEqual(detail_calls, ['1', '1', '2', '2', '3', '1', '2'])
+        self.assertEqual(['attachments' in row.raw for row in rows], [False, True, True])
+        self.assertEqual((adapter.collection_state, adapter.collection_error),
+                         ('partial', 'detail_unverified_empty_detail'))
+
+    def test_iris_does_not_recover_deferred_details_after_access_denial(self):
+        adapter = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+            iris_page('1', '2', '3'), TimeoutError(), TimeoutError(),
+            HTTPError(VIEW_URL, 403, 'denied', {}, None),
+        ]) as fetch:
+            rows = adapter.collect()
+
+        detail_calls = [call.args[1]['ancmId'] for call in fetch.call_args_list[1:]]
+        self.assertEqual(detail_calls, ['1', '1', '2'])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual((adapter.collection_state, adapter.collection_error),
+                         ('partial', 'detail_http_403'))
+
     def test_msit_recovery_retries_transient_failure_within_bound(self):
         calls = []
         def fetch(url, **kwargs):
@@ -106,6 +148,34 @@ class TestDeferredRecovery(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         self.assertEqual(a.collection_state, 'success')
         self.assertEqual(calls.count(2), 3)
+
+class TestNaraFullCollection(unittest.TestCase):
+    @staticmethod
+    def fetch_page(url, **kwargs):
+        query = parse_qs(urlparse(url).query)
+        page = int(query["pageNo"][0])
+        size = int(query["numOfRows"][0])
+        start = (page - 1) * size
+        total = 5_001
+        return nara_page(*(str(index) for index in range(start, min(start + size, total))), total=total)
+
+    def test_default_collects_more_than_five_thousand_notices(self):
+        adapter = NaraAdapter(service_key="fixture")
+        with patch("funded_project_research.adapters.nara.http_get_json", side_effect=self.fetch_page) as fetch:
+            rows = adapter.collect()
+        self.assertEqual(len(rows), 5_001)
+        self.assertEqual(rows[-1].raw["bidNtceNo"], "5000")
+        self.assertEqual(fetch.call_count, 52)
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("success", ""))
+
+    def test_explicit_cap_preserves_notices_and_reports_mismatch(self):
+        adapter = NaraAdapter(service_key="fixture", max_pages=50)
+        with patch("funded_project_research.adapters.nara.http_get_json", side_effect=self.fetch_page) as fetch:
+            rows = adapter.collect()
+        self.assertEqual(len(rows), 5_000)
+        self.assertEqual(fetch.call_count, 50)
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("partial", "count_mismatch"))
+
 
 class TestKStartupFullCollection(unittest.TestCase):
     def test_default_collects_beyond_old_fifty_page_limit(self):

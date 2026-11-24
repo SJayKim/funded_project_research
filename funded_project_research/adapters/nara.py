@@ -25,7 +25,7 @@ class NaraAdapter(Adapter):
         self,
         service_key: str | None = None,
         num_rows: int = 100,
-        max_pages: int = 50,
+        max_pages: int = 100,
         lookback_days: int = 7,
         now: datetime | None = None,
     ):
