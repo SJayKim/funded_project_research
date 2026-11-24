@@ -18,6 +18,11 @@ on:
 permissions:
   contents: read
 
+# Hold the production lock from the snapshot checkout through public verification.
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'collect-data-pages' || format('dashboard-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,20 +40,12 @@ jobs:
           ANTHROPIC_API_KEY: ''
         run: python -m unittest discover -s tests -v
 
-  publish:
+  build:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
-    concurrency:
-      group: collect-data-pages
-      cancel-in-progress: false
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    outputs:
+      artifact_name: ${{ steps.artifact.outputs.name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,10 +78,42 @@ jobs:
         env:
           GOV_DB: data-snapshot/gov_notices.db
         run: python -m funded_project_research.serve --build site/index.html
+      - name: Name the Pages artifact for this build attempt
+        id: artifact
+        run: echo "name=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-pages-artifact@v3
         with:
+          name: ${{ steps.artifact.outputs.name }}
           path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/dashboard-pages
+      - name: Extract the Pages artifact for verification
+        run: |
+          mkdir -p site
+          tar -xf "$RUNNER_TEMP/dashboard-pages/artifact.tar" -C site
       - uses: actions/deploy-pages@v4
         id: deploy
+        with:
+          artifact_name: ${{ needs.build.outputs.artifact_name }}
       - name: Verify published report and dashboard bytes
         run: python -m scripts.check_published --url https://sjaykim.github.io/funded_project_research/reliability.json --expected site/reliability.json --html site/index.html

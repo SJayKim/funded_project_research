@@ -33,20 +33,20 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    permissions:
+      contents: write
+    outputs:
+      pages_artifact: github-pages-${{ github.run_attempt }}
+      reliability_failed: ${{ steps.collector.outcome == 'failure' || steps.source_check.outcome == 'failure' || steps.recheck.outcome == 'failure' || steps.reliability.outcome == 'failure' }}
     env:
       # 새 주기가 추가돼도 기존 09:00 KST 수집 외의 예약 실행에는 메일 권한을 주지 않는다.
       HEALTH_ONLY: ${{ inputs.health_only || (github.event_name == 'schedule' && github.event.schedule != '0 0 * * *') }}
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -197,17 +197,51 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: site
+
+  deploy:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Download the built Pages artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.collect.outputs.pages_artifact }}
+          path: ${{ runner.temp }}/pages-artifact
+
+      - name: Extract the expected dashboard and report
+        run: |
+          mkdir -p site
+          tar -xf "$RUNNER_TEMP/pages-artifact/artifact.tar" -C site
 
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.collect.outputs.pages_artifact }}
 
       - name: Verify published report and dashboard bytes
         run: python -m scripts.check_published --url https://sjaykim.github.io/funded_project_research/reliability.json --expected site/reliability.json --html site/index.html
 
       - name: Report reliability failure after publishing evidence
-        if: ${{ steps.collector.outcome == 'failure' || steps.source_check.outcome == 'failure' || steps.recheck.outcome == 'failure' || steps.reliability.outcome == 'failure' }}
+        if: ${{ needs.collect.outputs.reliability_failed == 'true' }}
         run: |
           echo "수집·원문 재확인·신뢰성 검사에 문제가 있습니다. 데이터와 점검 근거를 보존했으며 이 실행은 실패로 표시합니다."
           exit 1
