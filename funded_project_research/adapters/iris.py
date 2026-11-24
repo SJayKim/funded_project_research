@@ -121,9 +121,12 @@ class IrisAdapter(Adapter):
                 raise SourceError("unverified_empty_detail")
             return detail
 
-        previous_state = (self.collection_state, self.collection_error)
+        def should_stop(error, consecutive_failures):
+            return (isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT
+                    or isinstance(error, HTTPError) and error.code in (401, 403, 429))
+
         missing = []
-        stopped = False
+        unresolved_kind = ""
         consecutive_failures = 0
         for index, rec in enumerate(rows, start=1):
             row = rec.raw
@@ -136,31 +139,37 @@ class IrisAdapter(Adapter):
             fields["bsnsYyDetail"] = row["bsnsYy"]
             try:
                 row.update(requests.fetch("detail", target, fetch_detail, fields))
-                consecutive_failures = 0
             except REQUEST_ERRORS as error:
-                if transient(error):
-                    missing.append((row, target, fields))
-                else:
-                    stopped = True
-                self.collection_state = "partial"
-                if self.collection_error in ("", "page_limit"):
-                    self.collection_error = f"detail_{request_error_kind(error)}"
                 consecutive_failures += 1
-                if (isinstance(error, RequestTimeLimit) or consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT
-                        or isinstance(error, HTTPError) and error.code in (401, 403, 429)):
-                    stopped = True
+                kind = request_error_kind(error)
+                if should_stop(error, consecutive_failures):
+                    unresolved_kind = unresolved_kind or kind
                     break
+                if transient(error):
+                    missing.append((row, target, fields, kind))
+                else:
+                    unresolved_kind = unresolved_kind or kind
+            else:
+                consecutive_failures = 0
             if index < len(rows):
                 time.sleep(self.interval)
-
-        if missing and not stopped:
-            unresolved = []
-            for row, target, fields in missing:
+        else:
+            consecutive_failures = 0
+            for row, target, fields, kind in missing:
+                if requests.retries_left <= 0:
+                    unresolved_kind = unresolved_kind or kind
+                    break
                 try:
                     row.update(requests.recover("detail-recovery", target, fetch_detail, fields))
                 except REQUEST_ERRORS as error:
-                    unresolved.append(error)
-                    if isinstance(error, RequestTimeLimit) or not transient(error):
+                    unresolved_kind = unresolved_kind or request_error_kind(error)
+                    consecutive_failures += 1
+                    if should_stop(error, consecutive_failures):
                         break
-            if not unresolved:
-                self.collection_state, self.collection_error = previous_state
+                else:
+                    consecutive_failures = 0
+
+        if unresolved_kind:
+            self.collection_state = "partial"
+            if self.collection_error in ("", "page_limit"):
+                self.collection_error = f"detail_{unresolved_kind}"

@@ -2,11 +2,11 @@ import contextlib
 import io
 import unittest
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 
 from funded_project_research.adapters.nara import NaraAdapter
-from funded_project_research.adapters.iris import IrisAdapter, LIST_URL
+from funded_project_research.adapters.iris import IrisAdapter, LIST_URL, VIEW_URL
 from funded_project_research.adapters.msit import MsitAdapter
 from test_source_retries import nara_page, iris_page, IRIS_DETAIL
 from test_msit_recovery import _page_xml, _page_number
@@ -91,6 +91,48 @@ class TestDeferredRecovery(unittest.TestCase):
         self.assertTrue(all('attachments' in r.raw for r in rows))
         self.assertEqual(a.collection_state, 'success')
         self.assertEqual(calls, ['1', '1', '2', '1'])
+
+    def test_iris_recovers_unrelated_timeout_after_unverified_detail(self):
+        adapter = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+            iris_page('024917', '017852', '032519'), b'<html></html>',
+            TimeoutError(), TimeoutError(), IRIS_DETAIL, IRIS_DETAIL,
+        ]) as fetch:
+            rows = adapter.collect()
+
+        detail_calls = [call.args[1]['ancmId'] for call in fetch.call_args_list[1:]]
+        self.assertEqual(detail_calls, ['024917', '017852', '017852', '032519', '017852'])
+        self.assertEqual(['attachments' in row.raw for row in rows], [False, True, True])
+        self.assertEqual((adapter.collection_state, adapter.collection_error),
+                         ('partial', 'detail_unverified_empty_detail'))
+
+    def test_iris_continues_recovery_after_an_individual_unverified_detail(self):
+        adapter = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+            iris_page('1', '2', '3'), TimeoutError(), TimeoutError(), TimeoutError(), TimeoutError(),
+            IRIS_DETAIL, b'<html></html>', IRIS_DETAIL,
+        ]) as fetch:
+            rows = adapter.collect()
+
+        detail_calls = [call.args[1]['ancmId'] for call in fetch.call_args_list[1:]]
+        self.assertEqual(detail_calls, ['1', '1', '2', '2', '3', '1', '2'])
+        self.assertEqual(['attachments' in row.raw for row in rows], [False, True, True])
+        self.assertEqual((adapter.collection_state, adapter.collection_error),
+                         ('partial', 'detail_unverified_empty_detail'))
+
+    def test_iris_does_not_recover_deferred_details_after_access_denial(self):
+        adapter = IrisAdapter(interval=0)
+        with patch('funded_project_research.adapters.iris.http_post', side_effect=[
+            iris_page('1', '2', '3'), TimeoutError(), TimeoutError(),
+            HTTPError(VIEW_URL, 403, 'denied', {}, None),
+        ]) as fetch:
+            rows = adapter.collect()
+
+        detail_calls = [call.args[1]['ancmId'] for call in fetch.call_args_list[1:]]
+        self.assertEqual(detail_calls, ['1', '1', '2'])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual((adapter.collection_state, adapter.collection_error),
+                         ('partial', 'detail_http_403'))
 
     def test_msit_recovery_retries_transient_failure_within_bound(self):
         calls = []
