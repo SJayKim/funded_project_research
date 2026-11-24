@@ -107,6 +107,34 @@ class TestDeferredRecovery(unittest.TestCase):
         self.assertEqual(a.collection_state, 'success')
         self.assertEqual(calls.count(2), 3)
 
+class TestNaraFullCollection(unittest.TestCase):
+    @staticmethod
+    def fetch_page(url, **kwargs):
+        query = parse_qs(urlparse(url).query)
+        page = int(query["pageNo"][0])
+        size = int(query["numOfRows"][0])
+        start = (page - 1) * size
+        total = 5_001
+        return nara_page(*(str(index) for index in range(start, min(start + size, total))), total=total)
+
+    def test_default_collects_more_than_five_thousand_notices(self):
+        adapter = NaraAdapter(service_key="fixture")
+        with patch("funded_project_research.adapters.nara.http_get_json", side_effect=self.fetch_page) as fetch:
+            rows = adapter.collect()
+        self.assertEqual(len(rows), 5_001)
+        self.assertEqual(rows[-1].raw["bidNtceNo"], "5000")
+        self.assertEqual(fetch.call_count, 52)
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("success", ""))
+
+    def test_explicit_cap_preserves_notices_and_reports_mismatch(self):
+        adapter = NaraAdapter(service_key="fixture", max_pages=50)
+        with patch("funded_project_research.adapters.nara.http_get_json", side_effect=self.fetch_page) as fetch:
+            rows = adapter.collect()
+        self.assertEqual(len(rows), 5_000)
+        self.assertEqual(fetch.call_count, 50)
+        self.assertEqual((adapter.collection_state, adapter.collection_error), ("partial", "count_mismatch"))
+
+
 class TestKStartupFullCollection(unittest.TestCase):
     def test_default_collects_beyond_old_fifty_page_limit(self):
         from funded_project_research.adapters.kstartup import KStartupAdapter
